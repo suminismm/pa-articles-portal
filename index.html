@@ -330,18 +330,38 @@ function buildSidebar() {
       el.addEventListener('click', () => setTopic(t));
       section.appendChild(el);
     });
+
+  // 기타: 위 목록에 없는 주제
+  const etcTopics = META.topics.filter(t => SIDEBAR_EXCLUDE_TOPICS.has(t));
+  const etcCnt = DB.filter(a => etcTopics.includes(a.topic) || !META.topics.includes(a.topic)).length;
+  const etcEl = document.createElement('div');
+  etcEl.className = 'sidebar-item';
+  etcEl.dataset.topic = '__etc__';
+  etcEl.innerHTML = `<span>기타</span><span class="cnt">${etcCnt}</span>`;
+  etcEl.addEventListener('click', () => setTopic('__etc__'));
+  section.appendChild(etcEl);
+
   document.getElementById('topicAll').addEventListener('click', () => setTopic(''));
 }
 
 function buildIngestSelects() {
   const tSel = document.getElementById('ingestTopic');
   const cSel = document.getElementById('ingestCompany');
-  META.topics.forEach(t => {
-    const o = document.createElement('option');
-    o.value = t; o.textContent = t;
-    tSel.appendChild(o);
-  });
-  META.companies.forEach(c => {
+
+  // 주제: 사이드바와 동일한 필터 적용 + '기타' 추가
+  META.topics
+    .filter(t => !SIDEBAR_EXCLUDE_TOPICS.has(t))
+    .forEach(t => {
+      const o = document.createElement('option');
+      o.value = t; o.textContent = t;
+      tSel.appendChild(o);
+    });
+  const oEtcT = document.createElement('option');
+  oEtcT.value = '기타'; oEtcT.textContent = '기타';
+  tSel.appendChild(oEtcT);
+
+  // 법인: COMPANY_ORDER 그대로 (기타 포함)
+  COMPANY_ORDER.forEach(c => {
     const o = document.createElement('option');
     o.value = c; o.textContent = c;
     cSel.appendChild(o);
@@ -380,7 +400,12 @@ function getFiltered() {
   } else if (activeCompany) {
     list = list.filter(a => a.companies.includes(activeCompany));
   }
-  if (activeTopic) list = list.filter(a => a.topic === activeTopic);
+  if (activeTopic === '__etc__') {
+    const visibleTopics = META.topics.filter(t => !SIDEBAR_EXCLUDE_TOPICS.has(t));
+    list = list.filter(a => !visibleTopics.includes(a.topic));
+  } else if (activeTopic) {
+    list = list.filter(a => a.topic === activeTopic);
+  }
   if (searchQuery) {
     const q = searchQuery.toLowerCase();
     list = list.filter(a =>
