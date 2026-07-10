@@ -197,33 +197,56 @@ function init() {
   render();
 }
 
+const COMPANY_ORDER = [
+  '카카오', '카카오페이', '카카오뱅크', '카카오모빌리티', '카카오엔터테인먼트',
+  'SM', '카카오스타일', '카카오엔터프라이즈', '카카오인베스트먼트', '카카오벤처스',
+  '디케이테크인', '기타'
+];
+
 function buildCompanyFilters() {
   const container = document.getElementById('companyFilters');
-  META.companies.forEach(c => {
-    const cnt = DB.filter(a => a.companies.includes(c)).length;
+  const divider = container.querySelector('.filter-divider');
+  COMPANY_ORDER.forEach(c => {
+    let cnt;
+    if (c === '기타') {
+      cnt = DB.filter(a => a.companies.length === 0 || a.companies.every(co => !COMPANY_ORDER.slice(0,-1).includes(co))).length;
+    } else {
+      cnt = DB.filter(a => a.companies.includes(c)).length;
+    }
     const chip = document.createElement('span');
     chip.className = 'filter-chip';
     chip.dataset.type = 'company';
     chip.dataset.val = c;
     chip.textContent = `${c} (${cnt})`;
     chip.addEventListener('click', () => setCompany(c));
-    container.insertBefore(chip, container.querySelector('.filter-divider'));
+    container.insertBefore(chip, divider);
   });
 }
+
+// 사이드바에서 제외할 토픽 (법인 단독 토픽들)
+const SIDEBAR_EXCLUDE_TOPICS = new Set([
+  '카카오페이', '카카오뱅크', '카카오모빌리티', '카카오엔터테인먼트',
+  'SM', '카카오스타일', '카카오엔터프라이즈', '카카오인베스트먼트', '카카오벤처스',
+  '디케이테크인', '카카오엔터프라이즈·브레인', '카카오(플랫폼·커머스)',
+  '카카오게임즈', '카카오벤처스·투자', '카카오페이·금융감독', '해외빅테크 실적·과세',
+  '국내대리인제도', '디지털경제·글로벌', '플랫폼 독점·전환비용', '빅테크·경쟁사(네이버·구글·애플 등)'
+]);
 
 function buildSidebar() {
   const sidebar = document.getElementById('sidebar');
   const section = sidebar.querySelector('.sidebar-section');
   document.getElementById('topicAllCnt').textContent = DB.length;
-  META.topics.forEach(t => {
-    const cnt = DB.filter(a => a.topic === t).length;
-    const el = document.createElement('div');
-    el.className = 'sidebar-item';
-    el.dataset.topic = t;
-    el.innerHTML = `<span>${t}</span><span class="cnt">${cnt}</span>`;
-    el.addEventListener('click', () => setTopic(t));
-    section.appendChild(el);
-  });
+  META.topics
+    .filter(t => !SIDEBAR_EXCLUDE_TOPICS.has(t))
+    .forEach(t => {
+      const cnt = DB.filter(a => a.topic === t).length;
+      const el = document.createElement('div');
+      el.className = 'sidebar-item';
+      el.dataset.topic = t;
+      el.innerHTML = `<span>${t}</span><span class="cnt">${cnt}</span>`;
+      el.addEventListener('click', () => setTopic(t));
+      section.appendChild(el);
+    });
   document.getElementById('topicAll').addEventListener('click', () => setTopic(''));
 }
 
@@ -258,9 +281,22 @@ function setTopic(val) {
   render();
 }
 
+// 법인명과 동일한 주제는 사이드바에서 숨김
+const COMPANY_TOPICS_EXCLUDE = new Set([
+  '카카오페이', '카카오뱅크', '카카오모빌리티', '카카오엔터테인먼트',
+  'SM', '카카오스타일', '카카오엔터프라이즈', '카카오인베스트먼트', '카카오벤처스',
+  '디케이테크인', '카카오엔터프라이즈·브레인', '카카오(플랫폼·커머스)',
+  '카카오게임즈', '카카오벤처스·투자', '카카오페이·금융감독', '카카오엔터테인먼트',
+  '디케이테크인'
+]);
+
 function getFiltered() {
   let list = DB.slice();
-  if (activeCompany) list = list.filter(a => a.companies.includes(activeCompany));
+  if (activeCompany === '기타') {
+    list = list.filter(a => a.companies.length === 0 || a.companies.every(co => !COMPANY_ORDER.slice(0,-1).includes(co)));
+  } else if (activeCompany) {
+    list = list.filter(a => a.companies.includes(activeCompany));
+  }
   if (activeTopic) list = list.filter(a => a.topic === activeTopic);
   if (searchQuery) {
     const q = searchQuery.toLowerCase();
