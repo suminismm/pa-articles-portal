@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PA 기사 아카이브</title>
+<script src="data/db.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #23273a;
+    --border: #2e3348;
+    --text: #e8eaf0;
+    --text2: #8b93b0;
+    --accent: #4f8ef7;
+    --accent2: #7c6af7;
+    --tag-bg: #1e2540;
+    --tag-text: #8b9fd4;
+    --green: #3ecf8e;
+    --card-hover: #1f2335;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Noto Sans KR', sans-serif; font-size: 14px; line-height: 1.6; }
+
+  /* 헤더 */
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
+  .header h1 { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
+  .header h1 span { color: var(--accent); }
+  .count-badge { background: var(--accent); color: #fff; border-radius: 12px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-left: auto; }
+
+  /* 검색바 */
+  .search-bar { padding: 14px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .search-input { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px 10px 40px; color: var(--text); font-size: 14px; outline: none; transition: border 0.2s; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b93b0' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: 12px center; }
+  .search-input:focus { border-color: var(--accent); }
+  .search-input::placeholder { color: var(--text2); }
+
+  /* 필터 영역 */
+  .filters { display: flex; gap: 12px; padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; flex-wrap: wrap; }
+  .filter-group { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+  .filter-label { color: var(--text2); font-size: 12px; white-space: nowrap; }
+  .filter-chip { background: var(--tag-bg); color: var(--tag-text); border: 1px solid var(--border); border-radius: 16px; padding: 4px 12px; font-size: 12px; cursor: pointer; white-space: nowrap; transition: all 0.15s; user-select: none; }
+  .filter-chip:hover { border-color: var(--accent); color: var(--accent); }
+  .filter-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .filter-divider { width: 1px; background: var(--border); height: 24px; flex-shrink: 0; }
+  .filter-sort { background: var(--tag-bg); color: var(--tag-text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; outline: none; }
+  .filter-sort option { background: var(--surface2); }
+
+  /* 메인 레이아웃 */
+  .main { display: flex; height: calc(100vh - 155px); }
+
+  /* 사이드바 */
+  .sidebar { width: 240px; flex-shrink: 0; border-right: 1px solid var(--border); overflow-y: auto; background: var(--surface); }
+  .sidebar-section { padding: 12px 0; }
+  .sidebar-title { padding: 6px 16px; font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.8px; }
+  .sidebar-item { padding: 7px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; color: var(--text2); transition: background 0.1s; }
+  .sidebar-item:hover { background: var(--surface2); color: var(--text); }
+  .sidebar-item.active { background: var(--tag-bg); color: var(--accent); border-left: 2px solid var(--accent); padding-left: 14px; }
+  .sidebar-item .cnt { font-size: 11px; background: var(--bg); border-radius: 10px; padding: 1px 7px; color: var(--text2); }
+  .sidebar-divider { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* 기사 목록 */
+  .articles-pane { flex: 1; overflow-y: auto; padding: 16px 24px; }
+  .articles-grid { display: flex; flex-direction: column; gap: 10px; }
+
+  /* 카드 */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; cursor: pointer; transition: all 0.15s; position: relative; }
+  .card:hover { background: var(--card-hover); border-color: var(--accent); }
+  .card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 6px; }
+  .card-title { font-size: 14px; font-weight: 600; color: var(--text); line-height: 1.4; flex: 1; }
+  .card-title a { color: inherit; text-decoration: none; }
+  .card-title a:hover { color: var(--accent); }
+  .card-date { font-size: 11px; color: var(--text2); white-space: nowrap; flex-shrink: 0; }
+  .card-summary { font-size: 13px; color: var(--text2); line-height: 1.55; margin-bottom: 10px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .card-footer { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .topic-badge { background: rgba(79, 142, 247, 0.12); color: var(--accent); border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: 500; }
+  .company-badge { background: rgba(124, 106, 247, 0.12); color: var(--accent2); border-radius: 4px; padding: 2px 8px; font-size: 11px; }
+  .tag-item { color: var(--text2); font-size: 11px; }
+
+  /* 빈 상태 */
+  .empty { text-align: center; padding: 60px 0; color: var(--text2); }
+  .empty svg { margin-bottom: 12px; opacity: 0.4; }
+  .empty p { font-size: 15px; }
+
+  /* 인제스트 패널 */
+  .ingest-btn { position: fixed; bottom: 24px; right: 24px; background: var(--accent); color: #fff; border: none; border-radius: 50%; width: 52px; height: 52px; font-size: 24px; cursor: pointer; box-shadow: 0 4px 16px rgba(79, 142, 247, 0.4); transition: all 0.2s; z-index: 200; display: flex; align-items: center; justify-content: center; }
+  .ingest-btn:hover { transform: scale(1.08); box-shadow: 0 6px 20px rgba(79, 142, 247, 0.5); }
+  .ingest-panel { position: fixed; bottom: 88px; right: 24px; background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 20px; width: 380px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); z-index: 200; display: none; }
+  .ingest-panel.open { display: block; }
+  .ingest-panel h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+  .ingest-url { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 13px; outline: none; margin-bottom: 10px; }
+  .ingest-url:focus { border-color: var(--accent); }
+  .ingest-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .ingest-select { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: var(--text); font-size: 12px; outline: none; }
+  .ingest-submit { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 10px 20px; font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; width: 100%; }
+  .ingest-submit:hover { opacity: 0.85; }
+  .ingest-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+  .ingest-status { font-size: 12px; color: var(--text2); text-align: center; min-height: 18px; }
+  .ingest-status.ok { color: var(--green); }
+  .ingest-status.err { color: #f46; }
+
+  /* 스크롤바 */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* 반응형 */
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+    .filters { padding: 10px 16px; }
+    .articles-pane { padding: 12px 16px; }
+    .ingest-panel { width: calc(100vw - 32px); right: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>PA <span>기사 아카이브</span></h1>
+  <span class="count-badge" id="totalBadge">0개</span>
+</div>
+
+<div class="search-bar">
+  <input type="text" class="search-input" id="searchInput" placeholder="기사 제목, 요약, 태그 검색..." autocomplete="off">
+</div>
+
+<div class="filters" id="companyFilters">
+  <span class="filter-label">법인</span>
+  <span class="filter-chip active" data-type="company" data-val="">전체</span>
+  <!-- 법인 칩 동적 삽입 -->
+  <div class="filter-divider"></div>
+  <span class="filter-label">정렬</span>
+  <select class="filter-sort" id="sortSelect">
+    <option value="date_desc">최신순</option>
+    <option value="date_asc">오래된순</option>
+  </select>
+</div>
+
+<div class="main">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-title">주제</div>
+      <div class="sidebar-item active" data-topic="" id="topicAll">
+        전체 <span class="cnt" id="topicAllCnt">0</span>
+      </div>
+      <!-- 주제 항목 동적 삽입 -->
+    </div>
+  </div>
+
+  <div class="articles-pane" id="articlesPane">
+    <div class="articles-grid" id="articlesList">
+      <div class="empty"><p>로딩 중...</p></div>
+    </div>
+  </div>
+</div>
+
+<button class="ingest-btn" id="ingestBtn" title="기사 추가">+</button>
+
+<div class="ingest-panel" id="ingestPanel">
+  <h3>기사 추가</h3>
+  <input type="url" class="ingest-url" id="ingestUrl" placeholder="기사 URL 붙여넣기">
+  <div class="ingest-row">
+    <select class="ingest-select" id="ingestTopic">
+      <option value="">주제 직접 선택 (선택사항)</option>
+    </select>
+    <select class="ingest-select" id="ingestCompany">
+      <option value="">법인 (선택사항)</option>
+    </select>
+  </div>
+  <button class="ingest-submit" id="ingestSubmit">추가하기</button>
+  <div class="ingest-status" id="ingestStatus"></div>
+</div>
+
+<script>
+let DB = [];
+let META = { topics: [], companies: [] };
+let activeCompany = "";
+let activeTopic = "";
+let searchQuery = "";
+let sortMode = "date_desc";
+
+async function loadData() {
+  try {
+    DB = ARTICLES_DATA;
+    META = META_DATA;
+    init();
+  } catch(e) {
+    document.getElementById('articlesList').innerHTML = '<div class="empty"><p>데이터를 불러올 수 없습니다: ' + e.message + '</p></div>';
+    console.error(e);
+  }
+}
+
+function init() {
+  buildCompanyFilters();
+  buildSidebar();
+  buildIngestSelects();
+  render();
+}
+
+function buildCompanyFilters() {
+  const container = document.getElementById('companyFilters');
+  META.companies.forEach(c => {
+    const cnt = DB.filter(a => a.companies.includes(c)).length;
+    const chip = document.createElement('span');
+    chip.className = 'filter-chip';
+    chip.dataset.type = 'company';
+    chip.dataset.val = c;
+    chip.textContent = `${c} (${cnt})`;
+    chip.addEventListener('click', () => setCompany(c));
+    container.insertBefore(chip, container.querySelector('.filter-divider'));
+  });
+}
+
+function buildSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const section = sidebar.querySelector('.sidebar-section');
+  document.getElementById('topicAllCnt').textContent = DB.length;
+  META.topics.forEach(t => {
+    const cnt = DB.filter(a => a.topic === t).length;
+    const el = document.createElement('div');
+    el.className = 'sidebar-item';
+    el.dataset.topic = t;
+    el.innerHTML = `<span>${t}</span><span class="cnt">${cnt}</span>`;
+    el.addEventListener('click', () => setTopic(t));
+    section.appendChild(el);
+  });
+  document.getElementById('topicAll').addEventListener('click', () => setTopic(''));
+}
+
+function buildIngestSelects() {
+  const tSel = document.getElementById('ingestTopic');
+  const cSel = document.getElementById('ingestCompany');
+  META.topics.forEach(t => {
+    const o = document.createElement('option');
+    o.value = t; o.textContent = t;
+    tSel.appendChild(o);
+  });
+  META.companies.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c; o.textContent = c;
+    cSel.appendChild(o);
+  });
+}
+
+function setCompany(val) {
+  activeCompany = val;
+  document.querySelectorAll('[data-type="company"]').forEach(c => {
+    c.classList.toggle('active', c.dataset.val === val);
+  });
+  render();
+}
+
+function setTopic(val) {
+  activeTopic = val;
+  document.querySelectorAll('.sidebar-item').forEach(el => {
+    el.classList.toggle('active', (el.dataset.topic || '') === val);
+  });
+  render();
+}
+
+function getFiltered() {
+  let list = DB.slice();
+  if (activeCompany) list = list.filter(a => a.companies.includes(activeCompany));
+  if (activeTopic) list = list.filter(a => a.topic === activeTopic);
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    list = list.filter(a =>
+      a.title.toLowerCase().includes(q) ||
+      a.summary.toLowerCase().includes(q) ||
+      a.tags.some(t => t.toLowerCase().includes(q)) ||
+      a.topic.toLowerCase().includes(q)
+    );
+  }
+  if (sortMode === 'date_asc') list.sort((a, b) => a.date.localeCompare(b.date));
+  else list.sort((a, b) => b.date.localeCompare(a.date));
+  return list;
+}
+
+function renderCard(a) {
+  const companies = a.companies.map(c => `<span class="company-badge">${c}</span>`).join('');
+  const tags = a.tags.slice(0, 4).map(t => `<span class="tag-item">#${t}</span>`).join(' ');
+  return `
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title"><a href="${escHtml(a.url)}" target="_blank" rel="noopener">${escHtml(a.title)}</a></div>
+        <div class="card-date">${a.date}</div>
+      </div>
+      ${a.summary ? `<div class="card-summary">${escHtml(a.summary)}</div>` : ''}
+      <div class="card-footer">
+        <span class="topic-badge">${escHtml(a.topic)}</span>
+        ${companies}
+        ${tags}
+      </div>
+    </div>`;
+}
+
+function render() {
+  const list = getFiltered();
+  document.getElementById('totalBadge').textContent = `${list.length}개`;
+  const el = document.getElementById('articlesList');
+  if (list.length === 0) {
+    el.innerHTML = '<div class="empty"><p>검색 결과가 없습니다.</p></div>';
+    return;
+  }
+  el.innerHTML = list.map(renderCard).join('');
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// 검색
+let searchTimer;
+document.getElementById('searchInput').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { searchQuery = e.target.value.trim(); render(); }, 200);
+});
+
+// 정렬
+document.getElementById('sortSelect').addEventListener('change', e => { sortMode = e.target.value; render(); });
+
+// 인제스트 패널
+document.getElementById('ingestBtn').addEventListener('click', () => {
+  document.getElementById('ingestPanel').classList.toggle('open');
+});
+
+document.getElementById('ingestSubmit').addEventListener('click', async () => {
+  const url = document.getElementById('ingestUrl').value.trim();
+  const topic = document.getElementById('ingestTopic').value;
+  const company = document.getElementById('ingestCompany').value;
+  const status = document.getElementById('ingestStatus');
+  const btn = document.getElementById('ingestSubmit');
+
+  if (!url || !url.startsWith('http')) {
+    status.className = 'ingest-status err';
+    status.textContent = 'URL을 올바르게 입력해주세요.';
+    return;
+  }
+
+  btn.disabled = true;
+  status.className = 'ingest-status';
+  status.textContent = '기사 정보를 가져오는 중...';
+
+  try {
+    // URL에서 메타 추출 (Open Graph / meta title)
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+    const res = await fetch(proxyUrl);
+    const data = await res.json();
+    const html = data.contents || '';
+    const titleMatch = html.match(/<meta[^>]+property="og:title"[^>]+content="([^"]+)"/i) ||
+                       html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const descMatch = html.match(/<meta[^>]+property="og:description"[^>]+content="([^"]+)"/i) ||
+                      html.match(/<meta[^>]+name="description"[^>]+content="([^"]+)"/i);
+    const title = titleMatch ? titleMatch[1].trim() : url;
+    const summary = descMatch ? descMatch[1].trim() : '';
+
+    const newArticle = {
+      id: `manual_${Date.now()}`,
+      title,
+      url,
+      summary,
+      date: new Date().toISOString().slice(0, 10),
+      topic: topic || '미분류',
+      companies: company ? [company] : [],
+      tags: [],
+      post_id: null,
+      post_url: null,
+      source: 'manual'
+    };
+
+    DB.unshift(newArticle);
+    if (topic && !META.topics.includes(topic)) META.topics.push(topic);
+    if (company && !META.companies.includes(company)) META.companies.push(company);
+
+    status.className = 'ingest-status ok';
+    status.textContent = `추가됨: ${title.slice(0, 40)}...`;
+    document.getElementById('ingestUrl').value = '';
+    render();
+  } catch(e) {
+    // 프록시 실패 시 수동으로 추가
+    const title = url.split('/').filter(Boolean).pop() || url;
+    const newArticle = {
+      id: `manual_${Date.now()}`,
+      title: `[수동 추가] ${title}`,
+      url,
+      summary: '',
+      date: new Date().toISOString().slice(0, 10),
+      topic: topic || '미분류',
+      companies: company ? [company] : [],
+      tags: [],
+      source: 'manual'
+    };
+    DB.unshift(newArticle);
+    status.className = 'ingest-status ok';
+    status.textContent = 'URL이 추가되었습니다 (제목 자동 추출 실패)';
+    document.getElementById('ingestUrl').value = '';
+    render();
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+loadData();
+</script>
+</body>
+</html>
