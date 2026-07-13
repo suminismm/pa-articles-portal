@@ -400,7 +400,7 @@ function buildCompanyFilters() {
     if (c === '기타') {
       cnt = DB.filter(a => a.companies.length === 0 || a.companies.every(co => !COMPANY_ORDER.slice(0,-1).includes(co))).length;
     } else {
-      cnt = DB.filter(a => a.companies.includes(c)).length;
+      cnt = DB.filter(a => getCompanies(a).includes(c)).length;
     }
     const chip = document.createElement('span');
     chip.className = 'filter-chip';
@@ -563,12 +563,16 @@ function scoreRelevance(a, query) {
   return score;
 }
 
+function getCompanies(a) {
+  return Array.isArray(a.companies) ? a.companies : [];
+}
+
 function getFiltered() {
   let list = DB.slice();
   if (activeCompany === '기타') {
-    list = list.filter(a => a.companies.length === 0 || a.companies.every(co => !COMPANY_ORDER.slice(0,-1).includes(co)));
+    list = list.filter(a => getCompanies(a).length === 0 || getCompanies(a).every(co => !COMPANY_ORDER.slice(0,-1).includes(co)));
   } else if (activeCompany) {
-    list = list.filter(a => a.companies.includes(activeCompany));
+    list = list.filter(a => getCompanies(a).includes(activeCompany));
   }
   if (activeTopic === '__etc__') {
     const visibleTopics = META.topics.filter(t => !SIDEBAR_EXCLUDE_TOPICS.has(t));
@@ -597,7 +601,7 @@ function getFiltered() {
 }
 
 function renderCard(a) {
-  const companies = a.companies.map(c => `<span class="company-badge">${escHtml(c)}</span>`).join('');
+  const companies = getCompanies(a).map(c => `<span class="company-badge">${escHtml(c)}</span>`).join('');
   const tags = a.tags.slice(0, 4).map(t => `<span class="tag-item">#${escHtml(t)}</span>`).join(' ');
   const hasSummary = a.summary && a.summary.trim().length > 0;
   const topicBadges = getTopics(a).map(t => `<span class="topic-badge">${escHtml(t)}</span>`).join('');
@@ -625,7 +629,7 @@ function openModal(a) {
   document.getElementById('modalLink').href = a.url;
 
   const meta = document.getElementById('modalMeta');
-  const companies = a.companies.map(c => `<span class="company-badge">${escHtml(c)}</span>`).join('');
+  const companies = getCompanies(a).map(c => `<span class="company-badge">${escHtml(c)}</span>`).join('');
   const topicBadges = getTopics(a).map(t => `<span class="topic-badge">${escHtml(t)}</span>`).join('');
   meta.innerHTML = `${topicBadges}${companies}<span style="color:var(--text2);font-size:11px;margin-left:4px">${a.date}</span>`;
 
