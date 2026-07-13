@@ -262,6 +262,18 @@ function extractPubDate(html) {
 }
 
 // 다양한 형식의 날짜 문자열 → "YYYY-MM-DD"
+function decodeHtmlEntities(str) {
+  if (!str) return str;
+  return str
+    .replace(/&quot;/g, '"').replace(/&#34;/g, '"')
+    .replace(/&apos;/g, "'").replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&').replace(/&#38;/g, '&')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
+
 function parseDate(str) {
   if (!str) return null;
   // ISO 8601: 2024-03-15T... 또는 2024-03-15
@@ -523,221 +535,176 @@ document.getElementById('searchInput').addEventListener('input', e => {
 // 정렬
 document.getElementById('sortSelect').addEventListener('change', e => { sortMode = e.target.value; render(); });
 
-// 인제스트 패널
+// ── 헬퍼 함수들 ──────────────────────────────────────────
+
+function getMeta(html, key, keyAttr = 'property') {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tagRe = new RegExp(`<meta\\s[^>]*${keyAttr}=["']${escaped}["'][^>]*>`, 'gi');
+  const tag = tagRe.exec(html)?.[0] || '';
+  return tag.match(/content=["']([^"']+)["']/i)?.[1]?.trim() || null;
+}
+
+async function fetchHtml(url) {
+  const enc = encodeURIComponent(url);
+  const proxies = [
+    () => fetch(`https://api.allorigins.win/raw?url=${enc}`).then(r => { if(!r.ok) throw r.status; return r.text(); }),
+    () => fetch(`https://api.allorigins.win/get?url=${enc}`).then(r => r.json()).then(d => { if(!d.contents) throw 'empty'; return d.contents; }),
+  ];
+  for (const tryProxy of proxies) {
+    try {
+      const html = await tryProxy();
+      if (html && html.length > 500 && !html.includes('CORSPROXY')) return html;
+    } catch(e) { /* 다음 시도 */ }
+  }
+  return null; // 실패해도 null 반환 (throw 안 함)
+}
+
+function extractBody(html) {
+  const candidates = [
+    html.match(/<div[^>]+id=["']dic_area["'][^>]*>([\s\S]*?)<\/div>/i),
+    html.match(/<div[^>]+class=["'][^"']*newsct_article[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),
+    html.match(/<div[^>]+class=["'][^"']*article_view[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),
+    html.match(/<article[^>]*>([\s\S]*?)<\/article>/i),
+    html.match(/<div[^>]+class=["'][^"']*(?:articleBody|article-body|article_body|news-article)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),
+  ];
+  const raw = candidates.find(m => m)?.[1] || null;
+  if (!raw) return null;
+  return raw
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<figure[\s\S]*?<\/figure>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function extractiveSummarize(ogDesc, body) {
+  const splitSentences = text =>
+    text.split(/(?<=[.!?])\s+(?=[가-힣A-Z"'"\(])/u)
+        .map(s => s.trim())
+        .filter(s => s.length > 20 && s.length < 300);
+  const scoreS = s => {
+    let sc = 0;
+    if (/\d+[억조만원%]/.test(s)) sc += 3;
+    if (/['"「」『』]/.test(s)) sc += 2;
+    if (/법|규제|시행|개정|도입|위반|과징금/.test(s)) sc += 2;
+    if (/처음|최초|최대|최소|역대|단독|발표|결정/.test(s)) sc += 2;
+    if (/계획|예정|추진|검토|의무|금지/.test(s)) sc += 1;
+    if (s.length > 60 && s.length < 200) sc += 1;
+    return sc;
+  };
+  const sentences = splitSentences(body || '');
+  const top = sentences.map(s => ({s, sc: scoreS(s)})).sort((a,b) => b.sc - a.sc).slice(0, 5).map(x => x.s);
+  const ordered = sentences.filter(s => top.includes(s)).slice(0, 5);
+  if (ordered.length === 0) return ogDesc || '';
+  return ordered.map(s => `• ${s}`).join('\n');
+}
+
+// ── 인제스트 패널 ──────────────────────────────────────────
+
 document.getElementById('ingestBtn').addEventListener('click', () => {
   document.getElementById('ingestPanel').classList.toggle('open');
 });
 
-document.getElementById('ingestSubmit').addEventListener('click', async () => {
+// 불러오기 버튼: 프록시로 제목/요약 자동 추출, 실패 시 수동 입력란 노출
+document.getElementById('ingestFetch').addEventListener('click', async () => {
+  const url = document.getElementById('ingestUrl').value.trim();
+  const statusEl = document.getElementById('ingestStatus');
+  const manualArea = document.getElementById('ingestManualArea');
+  if (!url || !url.startsWith('http')) {
+    statusEl.className = 'ingest-status err';
+    statusEl.textContent = 'URL을 먼저 입력해주세요.';
+    return;
+  }
+  statusEl.className = 'ingest-status';
+  statusEl.textContent = '기사 정보 불러오는 중...';
+  document.getElementById('ingestFetch').disabled = true;
+
+  const html = await fetchHtml(url);
+
+  if (html) {
+    const rawTitle = getMeta(html, 'og:title') || getMeta(html, 'twitter:title') || html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() || null;
+    const title = decodeHtmlEntities(rawTitle);
+    const ogDesc = decodeHtmlEntities(getMeta(html, 'og:description') || getMeta(html, 'twitter:description') || getMeta(html, 'description', 'name'));
+    const bodyText = extractBody(html);
+    const summary = extractiveSummarize(ogDesc, bodyText);
+
+    if (title) {
+      // 성공: 수동 입력란에 미리 채워두기 (편집 가능)
+      manualArea.style.display = 'block';
+      document.getElementById('ingestTitleInput').value = title;
+      document.getElementById('ingestSummaryInput').value = summary || ogDesc || '';
+      statusEl.className = 'ingest-status ok';
+      statusEl.textContent = '✓ 불러오기 완료 — 내용 확인 후 저장하세요';
+
+      // 발행일도 저장
+      document.getElementById('ingestUrl').dataset.pubdate = extractPubDate(html);
+      document.getElementById('ingestUrl').dataset.fetched = '1';
+    } else {
+      showManualInput(statusEl, manualArea);
+    }
+  } else {
+    showManualInput(statusEl, manualArea);
+  }
+  document.getElementById('ingestFetch').disabled = false;
+});
+
+function showManualInput(statusEl, manualArea) {
+  manualArea.style.display = 'block';
+  document.getElementById('ingestTitleInput').value = '';
+  document.getElementById('ingestSummaryInput').value = '';
+  statusEl.className = 'ingest-status err';
+  statusEl.textContent = '자동 추출 실패 — 제목/내용을 직접 입력해주세요';
+}
+
+// 저장 버튼
+document.getElementById('ingestSubmit').addEventListener('click', () => {
   const url = document.getElementById('ingestUrl').value.trim();
   const topic = document.getElementById('ingestTopic').value;
   const company = document.getElementById('ingestCompany').value;
-  const status = document.getElementById('ingestStatus');
-  const btn = document.getElementById('ingestSubmit');
+  const statusEl = document.getElementById('ingestStatus');
+  const title = document.getElementById('ingestTitleInput').value.trim();
+  const summary = document.getElementById('ingestSummaryInput').value.trim();
+  const pubdate = document.getElementById('ingestUrl').dataset.pubdate || new Date().toISOString().slice(0,10);
 
   if (!url || !url.startsWith('http')) {
-    status.className = 'ingest-status err';
-    status.textContent = 'URL을 올바르게 입력해주세요.';
+    statusEl.className = 'ingest-status err';
+    statusEl.textContent = 'URL을 입력해주세요.';
+    return;
+  }
+  if (!title) {
+    statusEl.className = 'ingest-status err';
+    statusEl.textContent = '제목을 입력해주세요. (불러오기 버튼을 먼저 눌러주세요)';
     return;
   }
 
-  btn.disabled = true;
-  status.className = 'ingest-status';
-  status.textContent = '기사 정보를 가져오는 중...';
+  const newArticle = {
+    id: `manual_${Date.now()}`,
+    title,
+    url,
+    summary,
+    date: pubdate,
+    topic: topic || '미분류',
+    companies: company ? [company] : [],
+    tags: [],
+    source: 'manual'
+  };
 
-  try {
-    // <meta> 태그에서 속성 순서 무관하게 content 추출
-    function getMeta(html, key, keyAttr = 'property') {
-      const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      // property/name="key" content="..." 또는 content="..." property/name="key" 양쪽 모두 처리
-      const tagRe = new RegExp(`<meta\\s[^>]*${keyAttr}=["']${escaped}["'][^>]*>`, 'gi');
-      const tag = tagRe.exec(html)?.[0] || '';
-      return tag.match(/content=["']([^"']+)["']/i)?.[1]?.trim() || null;
-    }
+  DB.unshift(newArticle);
+  saveManual();
 
-    // 여러 프록시를 순서대로 시도
-    async function fetchHtml(url) {
-      const enc = encodeURIComponent(url);
-      const proxies = [
-        // proxy.cors.sh — 다음뉴스 등 allorigins 차단 사이트에 강함
-        () => fetch(`https://proxy.cors.sh/${url}`, {headers:{'x-requested-with':'XMLHttpRequest'}}).then(r => r.ok ? r.text() : Promise.reject(r.status)),
-        // allorigins raw
-        () => fetch(`https://api.allorigins.win/raw?url=${enc}`).then(r => r.ok ? r.text() : Promise.reject(r.status)),
-        // allorigins get (JSON wrapper)
-        () => fetch(`https://api.allorigins.win/get?url=${enc}`).then(r => r.json()).then(d => d.contents || Promise.reject('empty')),
-      ];
-      for (const tryProxy of proxies) {
-        try {
-          const html = await tryProxy();
-          // corsproxy.io 자기 페이지 반환 방지
-          if (html && html.length > 500 && !html.includes('CORSPROXY')) return html;
-        } catch(e) { /* 다음 시도 */ }
-      }
-      throw new Error('모든 프록시 실패');
-    }
-
-    const html = await fetchHtml(url);
-
-    // HTML 엔티티 디코딩 (&quot; &amp; &lt; 등)
-    function decodeHtmlEntities(str) {
-      if (!str) return str;
-      return str
-        .replace(/&quot;/g, '"').replace(/&#34;/g, '"')
-        .replace(/&apos;/g, "'").replace(/&#39;/g, "'")
-        .replace(/&amp;/g, '&').replace(/&#38;/g, '&')
-        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
-        .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
-    }
-
-    const rawTitle =
-      getMeta(html, 'og:title') ||
-      getMeta(html, 'twitter:title') ||
-      html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() ||
-      null;
-    const title = decodeHtmlEntities(rawTitle);
-
-    const rawSummary =
-      getMeta(html, 'og:description') ||
-      getMeta(html, 'twitter:description') ||
-      getMeta(html, 'description', 'name') ||
-      null;
-
-    // 기사 본문 추출 — 여러 패턴 순차 시도
-    function extractBody(html) {
-      const candidates = [
-        // 네이버뉴스
-        html.match(/<div[^>]+id=["']dic_area["'][^>]*>([\s\S]*?)<\/div>/i),
-        html.match(/<div[^>]+class=["'][^"']*newsct_article[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),
-        // 다음뉴스
-        html.match(/<div[^>]+class=["'][^"']*article_view[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),
-        // 일반 article 태그
-        html.match(/<article[^>]*>([\s\S]*?)<\/article>/i),
-        // 연합뉴스·기타
-        html.match(/<div[^>]+class=["'][^"']*(?:article|articleBody|article-body|article_body|news-article)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),
-      ];
-      const raw = candidates.find(m => m)?.[1] || null;
-      if (!raw) return null;
-      return raw
-        .replace(/<script[\s\S]*?<\/script>/gi, '')
-        .replace(/<style[\s\S]*?<\/style>/gi, '')
-        .replace(/<figure[\s\S]*?<\/figure>/gi, '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s{2,}/g, ' ')
-        .replace(/&[a-z#0-9]+;/gi, s => decodeHtmlEntities(s))
-        .trim();
-    }
-
-    // 규칙 기반 핵심 문장 추출 요약
-    function extractiveSummarize(ogDesc, body, titleText) {
-      // 문장 분리 (마침표·느낌표·물음표 기준, 단 숫자 소수점 제외)
-      const splitSentences = text =>
-        text.split(/(?<=[.!?])\s+(?=[가-힣A-Z"'"\(])/u)
-            .map(s => s.trim())
-            .filter(s => s.length > 20 && s.length < 300);
-
-      // 핵심 키워드 (숫자·%, 따옴표, 법령명, 강조 표현 등 포함 문장 우선)
-      const scoreS = s => {
-        let sc = 0;
-        if (/\d+[억조만원%]/.test(s)) sc += 3;       // 수치
-        if (/['"「」『』]/.test(s)) sc += 2;          // 인용
-        if (/법|규제|시행|개정|도입|위반|과징금/.test(s)) sc += 2; // 규제
-        if (/처음|최초|최대|최소|역대|단독|발표|결정/.test(s)) sc += 2; // 뉴스성
-        if (/계획|예정|추진|검토|의무|금지/.test(s)) sc += 1;
-        if (s.length > 60 && s.length < 200) sc += 1; // 적당한 길이
-        return sc;
-      };
-
-      const sentences = splitSentences(body || '');
-      const scored = sentences
-        .map(s => ({ s, sc: scoreS(s) }))
-        .sort((a, b) => b.sc - a.sc);
-
-      // 점수 높은 순 최대 5개, 원문 등장 순서로 재정렬
-      const top = scored.slice(0, 5).map(x => x.s);
-      const ordered = sentences.filter(s => top.includes(s)).slice(0, 5);
-
-      if (ordered.length === 0) {
-        // 본문 추출 실패 시 og:description 그대로
-        return ogDesc ? decodeHtmlEntities(ogDesc) : '';
-      }
-
-      return ordered.map(s => `• ${s}`).join('\n');
-    }
-
-    const bodyText = extractBody(html);
-    const ogDesc = decodeHtmlEntities(rawSummary);
-    const finalSummary = extractiveSummarize(ogDesc, bodyText, title);
-
-    // 기사 원문 발행일 추출
-    const pubDate = extractPubDate(html);
-
-    const newArticle = {
-      id: `manual_${Date.now()}`,
-      title,
-      url,
-      summary: finalSummary,
-      date: pubDate,
-      topic: topic || '미분류',
-      companies: company ? [company] : [],
-      tags: [],
-      post_id: null,
-      post_url: null,
-      source: 'manual'
-    };
-
-    DB.unshift(newArticle);
-    saveManual();
-    if (topic && !META.topics.includes(topic)) META.topics.push(topic);
-    if (company && !META.companies.includes(company)) META.companies.push(company);
-
-    status.className = 'ingest-status ok';
-    status.textContent = `저장됨: ${title.slice(0, 40)}`;
-    document.getElementById('ingestUrl').value = '';
-    render();
-  } catch(e) {
-    // 프록시 실패 시 수동으로 추가
-    const title = url.split('/').filter(Boolean).pop() || url;
-    const newArticle = {
-      id: `manual_${Date.now()}`,
-      title: `[수동 추가] ${title}`,
-      url,
-      summary: '',
-      date: new Date().toISOString().slice(0, 10),
-      topic: topic || '미분류',
-      companies: company ? [company] : [],
-      tags: [],
-      source: 'manual'
-    };
-    DB.unshift(newArticle);
-    saveManual();
-    status.className = 'ingest-status ok';
-    status.textContent = 'URL이 저장되었습니다 (제목 자동 추출 실패)';
-    document.getElementById('ingestUrl').value = '';
-    render();
-  } finally {
-    btn.disabled = false;
-  }
+  // 입력 초기화
+  document.getElementById('ingestUrl').value = '';
+  document.getElementById('ingestUrl').dataset.pubdate = '';
+  document.getElementById('ingestUrl').dataset.fetched = '';
+  document.getElementById('ingestTitleInput').value = '';
+  document.getElementById('ingestSummaryInput').value = '';
+  document.getElementById('ingestManualArea').style.display = 'none';
+  statusEl.className = 'ingest-status ok';
+  statusEl.textContent = `✓ 저장됨: ${title.slice(0, 35)}`;
+  render();
 });
 
-// API 키 저장/로드
-(function() {
-  const saved = localStorage.getItem('claude_api_key');
-  const statusEl = document.getElementById('apiKeyStatus');
-  if (saved) statusEl.textContent = '✓ API 키 저장됨 — 기사 추가 시 자동 요약됩니다';
-  document.getElementById('apiKeySave').addEventListener('click', () => {
-    const key = document.getElementById('apiKeyInput').value.trim();
-    if (!key) {
-      localStorage.removeItem('claude_api_key');
-      statusEl.textContent = 'API 키가 삭제됐습니다';
-      return;
-    }
-    localStorage.setItem('claude_api_key', key);
-    document.getElementById('apiKeyInput').value = '';
-    statusEl.textContent = '✓ API 키 저장됨 — 기사 추가 시 자동 요약됩니다';
-  });
-})();
 
 // 모달 닫기
 document.getElementById('modalClose').addEventListener('click', () => {
