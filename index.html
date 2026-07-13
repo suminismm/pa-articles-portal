@@ -561,8 +561,9 @@ function getFiltered() {
       a.topic.toLowerCase().includes(q)
     );
   }
-  if (sortMode === 'date_asc') list.sort((a, b) => a.date.localeCompare(b.date));
-  else list.sort((a, b) => b.date.localeCompare(a.date));
+  const d = x => x.date || '0000-00-00';
+  if (sortMode === 'date_asc') list.sort((a, b) => d(a).localeCompare(d(b)));
+  else list.sort((a, b) => d(b).localeCompare(d(a)));
   return list;
 }
 
