@@ -641,9 +641,44 @@ function openModal(a) {
   document.getElementById('modalOverlay').classList.add('open');
 }
 
+// 검색어/필터 상태에서 각 법인 칩 카운트를 업데이트
+function updateChipCounts() {
+  // 검색어 기준으로 필터링한 리스트 (법인 필터 제외)
+  let base = DB.slice();
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    base = base.filter(a =>
+      (a.title || '').toLowerCase().includes(q) ||
+      (a.summary || '').toLowerCase().includes(q) ||
+      (Array.isArray(a.tags) ? a.tags : []).some(t => (t||'').toLowerCase().includes(q)) ||
+      getTopics(a).some(t => t.toLowerCase().includes(q))
+    );
+  }
+  if (activeTopic === '__etc__') {
+    const visibleTopics = META.topics.filter(t => !SIDEBAR_EXCLUDE_TOPICS.has(t));
+    base = base.filter(a => getTopics(a).every(t => !visibleTopics.includes(t)));
+  } else if (activeTopic) {
+    base = base.filter(a => getTopics(a).includes(activeTopic));
+  }
+
+  document.querySelectorAll('[data-type="company"]').forEach(chip => {
+    const val = chip.dataset.val;
+    let cnt;
+    if (val === '') {
+      cnt = base.length;
+    } else if (val === '기타') {
+      cnt = base.filter(a => getCompanies(a).length === 0 || getCompanies(a).every(co => !COMPANY_ORDER.slice(0,-1).includes(co))).length;
+    } else {
+      cnt = base.filter(a => getCompanies(a).includes(val)).length;
+    }
+    chip.textContent = val === '' ? `전체 (${cnt})` : `${val} (${cnt})`;
+  });
+}
+
 function render() {
   const list = getFiltered();
   document.getElementById('totalBadge').textContent = `${list.length}개`;
+  updateChipCounts();
   const el = document.getElementById('articlesList');
   if (list.length === 0) {
     el.innerHTML = '<div class="empty"><p>검색 결과가 없습니다.</p></div>';
