@@ -762,7 +762,7 @@ function showManualInput(statusEl, manualArea) {
 }
 
 // 저장 버튼
-document.getElementById('ingestSubmit').addEventListener('click', () => {
+document.getElementById('ingestSubmit').addEventListener('click', async () => {
   const url = document.getElementById('ingestUrl').value.trim();
   const topic = document.getElementById('ingestTopic').value;
   const company = document.getElementById('ingestCompany').value;
