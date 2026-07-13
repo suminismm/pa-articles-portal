@@ -200,7 +200,10 @@
     </div>
     <div class="modal-footer">
       <a class="modal-link" id="modalLink" href="#" target="_blank" rel="noopener">↗ 기사 원문 보기</a>
-      <button class="modal-close" id="modalClose">닫기</button>
+      <div style="display:flex;gap:8px">
+        <button class="modal-close" id="modalDelete" style="display:none;color:#f46;border-color:#f46">삭제</button>
+        <button class="modal-close" id="modalClose">닫기</button>
+      </div>
     </div>
   </div>
 </div>
@@ -262,10 +265,31 @@ function parseDate(str) {
   return null;
 }
 
+const LS_KEY = 'pa_articles_manual';
+
+function saveManual() {
+  const manual = DB.filter(a => a.source === 'manual');
+  localStorage.setItem(LS_KEY, JSON.stringify(manual));
+}
+
+function loadManual() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_KEY) || '[]');
+  } catch(e) { return []; }
+}
+
 async function loadData() {
   try {
     DB = ARTICLES_DATA;
     META = META_DATA;
+    // localStorage에 저장된 수동 추가 기사 복원
+    const manual = loadManual();
+    if (manual.length > 0) {
+      // 중복 URL 제거 후 맨 앞에 합산
+      const existingUrls = new Set(DB.map(a => a.url));
+      const fresh = manual.filter(a => !existingUrls.has(a.url));
+      DB = [...fresh, ...DB];
+    }
     init();
   } catch(e) {
     document.getElementById('articlesList').innerHTML = '<div class="empty"><p>데이터를 불러올 수 없습니다: ' + e.message + '</p></div>';
@@ -439,7 +463,10 @@ function renderCard(a) {
     </div>`;
 }
 
+let modalCurrentId = null;
+
 function openModal(a) {
+  modalCurrentId = a.id;
   document.getElementById('modalTitle').textContent = a.title;
   document.getElementById('modalSummary').textContent = a.summary || '발췌 내용이 없습니다.';
   document.getElementById('modalLink').href = a.url;
@@ -447,6 +474,9 @@ function openModal(a) {
   const meta = document.getElementById('modalMeta');
   const companies = a.companies.map(c => `<span class="company-badge">${escHtml(c)}</span>`).join('');
   meta.innerHTML = `<span class="topic-badge">${escHtml(a.topic)}</span>${companies}<span style="color:var(--text2);font-size:11px;margin-left:4px">${a.date}</span>`;
+
+  // 수동 추가 기사만 삭제 버튼 표시
+  document.getElementById('modalDelete').style.display = a.source === 'manual' ? 'block' : 'none';
 
   document.getElementById('modalOverlay').classList.add('open');
 }
@@ -538,11 +568,12 @@ document.getElementById('ingestSubmit').addEventListener('click', async () => {
     };
 
     DB.unshift(newArticle);
+    saveManual();
     if (topic && !META.topics.includes(topic)) META.topics.push(topic);
     if (company && !META.companies.includes(company)) META.companies.push(company);
 
     status.className = 'ingest-status ok';
-    status.textContent = `추가됨: ${title.slice(0, 40)}...`;
+    status.textContent = `저장됨: ${title.slice(0, 40)}`;
     document.getElementById('ingestUrl').value = '';
     render();
   } catch(e) {
@@ -560,8 +591,9 @@ document.getElementById('ingestSubmit').addEventListener('click', async () => {
       source: 'manual'
     };
     DB.unshift(newArticle);
+    saveManual();
     status.className = 'ingest-status ok';
-    status.textContent = 'URL이 추가되었습니다 (제목 자동 추출 실패)';
+    status.textContent = 'URL이 저장되었습니다 (제목 자동 추출 실패)';
     document.getElementById('ingestUrl').value = '';
     render();
   } finally {
@@ -572,6 +604,16 @@ document.getElementById('ingestSubmit').addEventListener('click', async () => {
 // 모달 닫기
 document.getElementById('modalClose').addEventListener('click', () => {
   document.getElementById('modalOverlay').classList.remove('open');
+});
+
+// 수동 추가 기사 삭제
+document.getElementById('modalDelete').addEventListener('click', () => {
+  if (!modalCurrentId) return;
+  if (!confirm('이 기사를 삭제할까요?')) return;
+  DB = DB.filter(a => a.id !== modalCurrentId);
+  saveManual();
+  document.getElementById('modalOverlay').classList.remove('open');
+  render();
 });
 document.getElementById('modalOverlay').addEventListener('click', e => {
   if (e.target === document.getElementById('modalOverlay'))
