@@ -5,70 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>생강가루</title>
 <script src="data/db.js"></script>
-<script>
-// Supabase 설정
-const SB_URL = 'https://qymzbnadjpwasqhksqgg.supabase.co';
-const SB_KEY = 'sb_publishable_mEx2BrsnD398jORsaK5kEw_r9E6pboR';
-
-async function sbFetch(path, options = {}) {
-  const res = await fetch(`${SB_URL}/rest/v1/${path}`, {
-    ...options,
-    headers: {
-      'apikey': SB_KEY,
-      'Authorization': `Bearer ${SB_KEY}`,
-      'Content-Type': 'application/json',
-      'Prefer': options.prefer || '',
-      ...(options.headers || {})
-    }
-  });
-  if (!res.ok) throw new Error(`Supabase error: ${res.status}`);
-  const text = await res.text();
-  return text ? JSON.parse(text) : [];
-}
-
-// Supabase에서 수동 추가 기사 불러오기
-async function loadFromSupabase() {
-  try {
-    const rows = await sbFetch('articles?select=*&order=created_at.desc');
-    return rows.map(r => ({
-      ...r,
-      topics: Array.isArray(r.topics) ? r.topics : [],
-      companies: Array.isArray(r.companies) ? r.companies : [],
-      tags: Array.isArray(r.tags) ? r.tags : [],
-      source: 'manual'
-    }));
-  } catch(e) {
-    console.warn('Supabase 로드 실패, localStorage 폴백:', e);
-    return null;
-  }
-}
-
-// Supabase에 기사 저장
-async function saveToSupabase(article) {
-  await sbFetch('articles', {
-    method: 'POST',
-    prefer: 'return=minimal',
-    body: JSON.stringify({
-      id: article.id,
-      title: article.title,
-      url: article.url,
-      summary: article.summary || '',
-      date: article.date,
-      topic: article.topic,
-      topics: article.topics || [],
-      companies: article.companies || [],
-      tags: article.tags || [],
-      source: 'manual',
-      post_id: article.post_id || null
-    })
-  });
-}
-
-// Supabase에서 기사 삭제
-async function deleteFromSupabase(id) {
-  await sbFetch(`articles?id=eq.${id}`, { method: 'DELETE' });
-}
-</script>
 <style>
   :root {
     --bg: #0f1117;
@@ -281,6 +217,53 @@ async function deleteFromSupabase(id) {
 </div>
 
 <script>
+// ── Supabase ────────────────────────────────────────────
+const SB_URL = 'https://qymzbnadjpwasqhksqgg.supabase.co';
+const SB_KEY = 'sb_publishable_mEx2BrsnD398jORsaK5kEw_r9E6pboR';
+
+async function sbFetch(path, options = {}) {
+  const res = await fetch(`${SB_URL}/rest/v1/${path}`, {
+    ...options,
+    headers: {
+      'apikey': SB_KEY,
+      'Authorization': `Bearer ${SB_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': options.prefer || '',
+      ...(options.headers || {})
+    }
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}`);
+  const text = await res.text();
+  return text ? JSON.parse(text) : [];
+}
+async function loadFromSupabase() {
+  try {
+    const rows = await sbFetch('articles?select=*&order=created_at.desc');
+    return rows.map(r => ({
+      ...r,
+      topics: Array.isArray(r.topics) ? r.topics : [],
+      companies: Array.isArray(r.companies) ? r.companies : [],
+      tags: Array.isArray(r.tags) ? r.tags : [],
+      source: 'manual'
+    }));
+  } catch(e) { console.warn('Supabase 로드 실패:', e); return null; }
+}
+async function saveToSupabase(a) {
+  await sbFetch('articles', {
+    method: 'POST', prefer: 'return=minimal',
+    body: JSON.stringify({
+      id: a.id, title: a.title, url: a.url, summary: a.summary || '',
+      date: a.date, topic: a.topic, topics: a.topics || [],
+      companies: a.companies || [], tags: a.tags || [],
+      source: 'manual', post_id: a.post_id || null
+    })
+  });
+}
+async function deleteFromSupabase(id) {
+  await sbFetch(`articles?id=eq.${id}`, { method: 'DELETE' });
+}
+// ────────────────────────────────────────────────────────
+
 let DB = [];
 let META = { topics: [], companies: [] };
 let activeCompany = "";
