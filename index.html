@@ -26,6 +26,7 @@
   /* 헤더 */
   .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
   .header h1 { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
+  .header h1 span { color: #FEE500; }
   .header h1 span { color: var(--accent); }
   .count-badge { background: var(--accent); color: #fff; border-radius: 12px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-left: auto; }
 
@@ -751,17 +752,34 @@ function getMeta(html, key, keyAttr = 'property') {
 
 async function fetchHtml(url) {
   const enc = encodeURIComponent(url);
+
+  // allorigins /get: JSON 내부에 </script> 있어도 text()로 받아서 수동 파싱
+  async function tryAlloriginsGet() {
+    const r = await fetch(`https://api.allorigins.win/get?url=${enc}`);
+    if (!r.ok) throw r.status;
+    const text = await r.text();
+    // JSON 파싱 실패 대비: contents":"..." 패턴으로 직접 추출
+    const m = text.match(/"contents"\s*:\s*"([\s\S]+)",\s*"status"/);
+    if (m) {
+      try { return JSON.parse('"' + m[1] + '"'); } catch(e) {}
+    }
+    // 정상 파싱 시도
+    try { const d = JSON.parse(text); return d.contents || null; } catch(e) {}
+    return null;
+  }
+
   const proxies = [
     () => fetch(`https://api.allorigins.win/raw?url=${enc}`).then(r => { if(!r.ok) throw r.status; return r.text(); }),
-    () => fetch(`https://api.allorigins.win/get?url=${enc}`).then(r => r.json()).then(d => { if(!d.contents) throw 'empty'; return d.contents; }),
+    tryAlloriginsGet,
+    () => fetch(`https://proxy.cors.sh/${url}`, { headers: { 'x-cors-api-key': 'temp' } }).then(r => r.ok ? r.text() : Promise.reject(r.status)),
   ];
   for (const tryProxy of proxies) {
     try {
       const html = await tryProxy();
-      if (html && html.length > 500 && !html.includes('CORSPROXY')) return html;
+      if (html && html.length > 500 && !html.includes('CORSPROXY — Fix')) return html;
     } catch(e) { /* 다음 시도 */ }
   }
-  return null; // 실패해도 null 반환 (throw 안 함)
+  return null;
 }
 
 function extractBody(html) {
