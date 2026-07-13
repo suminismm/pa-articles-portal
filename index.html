@@ -303,9 +303,20 @@ async function loadData() {
     DB = ARTICLES_DATA;
     META = META_DATA;
     // localStorage에 저장된 수동 추가 기사 복원
-    const manual = loadManual();
+    let manual = loadManual();
+    // 저장된 수동 기사에 topics 배열 없으면 자동 태깅 적용
+    let manualChanged = false;
+    manual = manual.map(a => {
+      if (!Array.isArray(a.topics) || a.topics.length === 0) {
+        const auto = autoTagTopics(a.title, a.summary);
+        const topics = auto.length ? auto : (a.topic ? [a.topic] : ['미분류']);
+        manualChanged = true;
+        return { ...a, topics, topic: topics[0] };
+      }
+      return a;
+    });
+    if (manualChanged) localStorage.setItem(LS_KEY, JSON.stringify(manual));
     if (manual.length > 0) {
-      // 중복 URL 제거 후 맨 앞에 합산
       const existingUrls = new Set(DB.map(a => a.url));
       const fresh = manual.filter(a => !existingUrls.has(a.url));
       DB = [...fresh, ...DB];
@@ -366,7 +377,7 @@ function buildSidebar() {
   META.topics
     .filter(t => !SIDEBAR_EXCLUDE_TOPICS.has(t))
     .forEach(t => {
-      const cnt = DB.filter(a => a.topic === t).length;
+      const cnt = DB.filter(a => getTopics(a).includes(t)).length;
       const el = document.createElement('div');
       el.className = 'sidebar-item';
       el.dataset.topic = t;
@@ -437,6 +448,43 @@ const COMPANY_TOPICS_EXCLUDE = new Set([
   '디케이테크인'
 ]);
 
+// 기사의 모든 주제 배열 반환 (topics 배열 있으면 그걸, 없으면 topic 단일값)
+function getTopics(a) {
+  if (Array.isArray(a.topics) && a.topics.length > 0) return a.topics;
+  return a.topic ? [a.topic] : [];
+}
+
+// 키워드 → 주제 자동 매핑 규칙
+const TOPIC_RULES = [
+  { topic: 'AI·알고리즘',         kw: ['AI', '인공지능', '알고리즘', '챗GPT', 'ChatGPT', 'LLM', '거대언어모델', '머신러닝', '딥러닝'] },
+  { topic: '핀테크',              kw: ['핀테크', '간편결제', '전자금융', '오픈뱅킹', '금융플랫폼', '페이', '송금', '결제'] },
+  { topic: '해외사업',            kw: ['해외', '글로벌', '일본', '미국', '동남아', '유럽', '중국', '픽코마', '진출', '해외법인'] },
+  { topic: '망이용료·네트워크',    kw: ['망이용료', '망사용료', '망중립성', '트래픽', '네트워크', 'ISP', 'OTT'] },
+  { topic: '반독점·공정위',       kw: ['공정위', '공정거래', '반독점', '독점', '과징금', '시장지배', '불공정'] },
+  { topic: '규제',                kw: ['규제', '법안', '개정안', '입법', '시행령', '고시', '방통위', '과기부'] },
+  { topic: '지배구조·거버넌스',   kw: ['지배구조', '거버넌스', '주주', '이사회', '상장', '지분', '계열사', '공동체'] },
+  { topic: '블록체인·NFT·가상자산', kw: ['블록체인', 'NFT', '가상자산', '암호화폐', '코인', '클레이', '토큰', '디파이'] },
+  { topic: '광고·개인정보·데이터', kw: ['개인정보', '광고', '데이터', '맞춤형', '추적', 'GDPR', '정보보호'] },
+  { topic: '플랫폼노동',          kw: ['플랫폼노동', '특수고용', '라이더', '배달', '대리기사', '프리랜서', '긱워커'] },
+  { topic: '헬스케어·의료',       kw: ['헬스케어', '의료', '디지털헬스', '원격진료', '의약품', '바이오'] },
+  { topic: '인앱결제',            kw: ['인앱결제', '앱마켓', '구글플레이', '앱스토어', '수수료'] },
+  { topic: '디지털세·글로벌과세', kw: ['디지털세', '법인세', '글로벌과세', '최저한세', 'OECD', '필라'] },
+  { topic: '기술보호·IP',         kw: ['기술탈취', '특허', '저작권', '부정경쟁', '영업비밀', 'IP'] },
+  { topic: '이용자보호·서비스장애', kw: ['이용자보호', '서비스장애', '먹통', '환불', '피해보상', '불만'] },
+  { topic: '정부 정책자료',       kw: ['업무보고', '경제정책', '국정과제', '정부안', '부처'] },
+];
+
+function autoTagTopics(title, summary) {
+  const text = (title + ' ' + (summary || '')).toLowerCase();
+  const matched = [];
+  for (const { topic, kw } of TOPIC_RULES) {
+    if (kw.some(k => text.includes(k.toLowerCase()))) {
+      matched.push(topic);
+    }
+  }
+  return matched;
+}
+
 function getFiltered() {
   let list = DB.slice();
   if (activeCompany === '기타') {
@@ -446,9 +494,9 @@ function getFiltered() {
   }
   if (activeTopic === '__etc__') {
     const visibleTopics = META.topics.filter(t => !SIDEBAR_EXCLUDE_TOPICS.has(t));
-    list = list.filter(a => !visibleTopics.includes(a.topic));
+    list = list.filter(a => getTopics(a).every(t => !visibleTopics.includes(t)));
   } else if (activeTopic) {
-    list = list.filter(a => a.topic === activeTopic);
+    list = list.filter(a => getTopics(a).includes(activeTopic));
   }
   if (searchQuery) {
     const q = searchQuery.toLowerCase();
@@ -468,6 +516,7 @@ function renderCard(a) {
   const companies = a.companies.map(c => `<span class="company-badge">${escHtml(c)}</span>`).join('');
   const tags = a.tags.slice(0, 4).map(t => `<span class="tag-item">#${escHtml(t)}</span>`).join(' ');
   const hasSummary = a.summary && a.summary.trim().length > 0;
+  const topicBadges = getTopics(a).map(t => `<span class="topic-badge">${escHtml(t)}</span>`).join('');
   return `
     <div class="card" data-id="${escHtml(a.id)}">
       <div class="card-header">
@@ -476,7 +525,7 @@ function renderCard(a) {
       </div>
       ${hasSummary ? `<div class="card-summary">${escHtml(a.summary)}</div>` : ''}
       <div class="card-footer">
-        <span class="topic-badge">${escHtml(a.topic)}</span>
+        ${topicBadges}
         ${companies}
         ${tags}
       </div>
@@ -493,7 +542,8 @@ function openModal(a) {
 
   const meta = document.getElementById('modalMeta');
   const companies = a.companies.map(c => `<span class="company-badge">${escHtml(c)}</span>`).join('');
-  meta.innerHTML = `<span class="topic-badge">${escHtml(a.topic)}</span>${companies}<span style="color:var(--text2);font-size:11px;margin-left:4px">${a.date}</span>`;
+  const topicBadges = getTopics(a).map(t => `<span class="topic-badge">${escHtml(t)}</span>`).join('');
+  meta.innerHTML = `${topicBadges}${companies}<span style="color:var(--text2);font-size:11px;margin-left:4px">${a.date}</span>`;
 
   // 수동 추가 기사만 삭제 버튼 표시
   document.getElementById('modalDelete').style.display = a.source === 'manual' ? 'block' : 'none';
@@ -678,13 +728,16 @@ document.getElementById('ingestSubmit').addEventListener('click', () => {
     return;
   }
 
+  const autoTopics = autoTagTopics(title, summary);
+  const finalTopics = topic ? [...new Set([topic, ...autoTopics])] : (autoTopics.length ? autoTopics : ['미분류']);
   const newArticle = {
     id: `manual_${Date.now()}`,
     title,
     url,
     summary,
     date: pubdate,
-    topic: topic || '미분류',
+    topic: finalTopics[0],
+    topics: finalTopics,
     companies: company ? [company] : [],
     tags: [],
     source: 'manual'
