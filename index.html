@@ -541,20 +541,23 @@ function autoTagTopics(title, summary) {
 }
 
 function scoreRelevance(a, query) {
+  if (!query) return 0;
   const q = query.toLowerCase();
   const title = (a.title || '').toLowerCase();
   const summary = (a.summary || '').toLowerCase();
   const topics = getTopics(a).join(' ').toLowerCase();
-  const tags = (a.tags || []).join(' ').toLowerCase();
+  const tags = (Array.isArray(a.tags) ? a.tags : []).join(' ').toLowerCase();
   let score = 0;
-  // 제목 일치 가장 높은 가중치
+  // 제목 일치
   if (title === q) score += 100;
   else if (title.startsWith(q)) score += 60;
   else if (title.includes(q)) score += 40;
-  // 요약 일치
-  const summaryMatches = (summary.match(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'g')) || []).length;
-  score += summaryMatches * 10;
-  // 주제/태그 일치
+  // 요약 등장 횟수
+  try {
+    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'g');
+    score += (summary.match(re) || []).length * 10;
+  } catch(e) {}
+  // 주제/태그
   if (topics.includes(q)) score += 20;
   if (tags.includes(q)) score += 15;
   return score;
@@ -576,10 +579,10 @@ function getFiltered() {
   if (searchQuery) {
     const q = searchQuery.toLowerCase();
     list = list.filter(a =>
-      a.title.toLowerCase().includes(q) ||
-      a.summary.toLowerCase().includes(q) ||
-      a.tags.some(t => t.toLowerCase().includes(q)) ||
-      a.topic.toLowerCase().includes(q)
+      (a.title || '').toLowerCase().includes(q) ||
+      (a.summary || '').toLowerCase().includes(q) ||
+      (Array.isArray(a.tags) ? a.tags : []).some(t => (t || '').toLowerCase().includes(q)) ||
+      getTopics(a).some(t => t.toLowerCase().includes(q))
     );
   }
   const d = x => x.date || '0000-00-00';
