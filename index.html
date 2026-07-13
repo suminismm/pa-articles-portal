@@ -150,6 +150,7 @@
   <select class="filter-sort" id="sortSelect">
     <option value="date_desc">최신순</option>
     <option value="date_asc">오래된순</option>
+    <option value="relevance">관련도순</option>
   </select>
 </div>
 
@@ -539,6 +540,26 @@ function autoTagTopics(title, summary) {
   return matched;
 }
 
+function scoreRelevance(a, query) {
+  const q = query.toLowerCase();
+  const title = (a.title || '').toLowerCase();
+  const summary = (a.summary || '').toLowerCase();
+  const topics = getTopics(a).join(' ').toLowerCase();
+  const tags = (a.tags || []).join(' ').toLowerCase();
+  let score = 0;
+  // 제목 일치 가장 높은 가중치
+  if (title === q) score += 100;
+  else if (title.startsWith(q)) score += 60;
+  else if (title.includes(q)) score += 40;
+  // 요약 일치
+  const summaryMatches = (summary.match(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'g')) || []).length;
+  score += summaryMatches * 10;
+  // 주제/태그 일치
+  if (topics.includes(q)) score += 20;
+  if (tags.includes(q)) score += 15;
+  return score;
+}
+
 function getFiltered() {
   let list = DB.slice();
   if (activeCompany === '기타') {
@@ -562,8 +583,13 @@ function getFiltered() {
     );
   }
   const d = x => x.date || '0000-00-00';
-  if (sortMode === 'date_asc') list.sort((a, b) => d(a).localeCompare(d(b)));
-  else list.sort((a, b) => d(b).localeCompare(d(a)));
+  if (sortMode === 'date_asc') {
+    list.sort((a, b) => d(a).localeCompare(d(b)));
+  } else if (sortMode === 'relevance' && searchQuery) {
+    list.sort((a, b) => scoreRelevance(b, searchQuery) - scoreRelevance(a, searchQuery));
+  } else {
+    list.sort((a, b) => d(b).localeCompare(d(a)));
+  }
   return list;
 }
 
@@ -634,7 +660,19 @@ function escHtml(s) {
 let searchTimer;
 document.getElementById('searchInput').addEventListener('input', e => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { searchQuery = e.target.value.trim(); render(); }, 200);
+  searchTimer = setTimeout(() => {
+    searchQuery = e.target.value.trim();
+    // 검색어 있으면 자동으로 관련도순, 없으면 최신순 복귀
+    const sortSel = document.getElementById('sortSelect');
+    if (searchQuery && sortSel.value !== 'relevance') {
+      sortSel.value = 'relevance';
+      sortMode = 'relevance';
+    } else if (!searchQuery && sortSel.value === 'relevance') {
+      sortSel.value = 'date_desc';
+      sortMode = 'date_desc';
+    }
+    render();
+  }, 200);
 });
 
 // 정렬
