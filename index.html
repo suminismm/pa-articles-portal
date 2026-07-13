@@ -137,8 +137,10 @@
   <span class="count-badge" id="totalBadge">0개</span>
 </div>
 
-<div class="search-bar">
-  <input type="text" class="search-input" id="searchInput" placeholder="기사 제목, 요약, 태그 검색..." autocomplete="off">
+<div class="search-bar" style="display:flex;gap:8px">
+  <input type="text" class="search-input" id="searchInput" placeholder="기사 제목, 요약, 태그 검색..." autocomplete="off" style="flex:1">
+  <button id="searchBtn" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:0 18px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">검색</button>
+  <button id="searchClear" style="display:none;background:var(--tag-bg);color:var(--text2);border:1px solid var(--border);border-radius:8px;padding:0 14px;font-size:13px;cursor:pointer;flex-shrink:0">✕</button>
 </div>
 
 <div class="filters" id="companyFilters">
@@ -664,22 +666,40 @@ function escHtml(s) {
 }
 
 // 검색
+function doSearch() {
+  searchQuery = document.getElementById('searchInput').value.trim();
+  const sortSel = document.getElementById('sortSelect');
+  if (searchQuery && sortSel.value !== 'relevance') {
+    sortSel.value = 'relevance';
+    sortMode = 'relevance';
+  } else if (!searchQuery && sortSel.value === 'relevance') {
+    sortSel.value = 'date_desc';
+    sortMode = 'date_desc';
+  }
+  document.getElementById('searchClear').style.display = searchQuery ? 'block' : 'none';
+  render();
+}
+
+// 검색 버튼 클릭
+document.getElementById('searchBtn').addEventListener('click', doSearch);
+
+// 엔터키
+document.getElementById('searchInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doSearch();
+});
+
+// 실시간 (타이핑하면서도 동작)
 let searchTimer;
 document.getElementById('searchInput').addEventListener('input', e => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
-    searchQuery = e.target.value.trim();
-    // 검색어 있으면 자동으로 관련도순, 없으면 최신순 복귀
-    const sortSel = document.getElementById('sortSelect');
-    if (searchQuery && sortSel.value !== 'relevance') {
-      sortSel.value = 'relevance';
-      sortMode = 'relevance';
-    } else if (!searchQuery && sortSel.value === 'relevance') {
-      sortSel.value = 'date_desc';
-      sortMode = 'date_desc';
-    }
-    render();
-  }, 200);
+  searchTimer = setTimeout(doSearch, 200);
+});
+
+// 초기화 버튼
+document.getElementById('searchClear').addEventListener('click', () => {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchClear').style.display = 'none';
+  doSearch();
 });
 
 // 정렬
