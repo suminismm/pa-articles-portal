@@ -597,61 +597,71 @@ document.getElementById('ingestSubmit').addEventListener('click', async () => {
       getMeta(html, 'description', 'name') ||
       null;
 
-    // 기사 본문 추출 (article/main 태그 내 텍스트)
+    // 기사 본문 추출 — 여러 패턴 순차 시도
     function extractBody(html) {
-      // <article> 또는 id/class에 article·content·body·news가 포함된 div
-      const bodyMatch =
-        html.match(/<article[^>]*>([\s\S]*?)<\/article>/i) ||
-        html.match(/<div[^>]*(?:id|class)="[^"]*(?:article|articleBody|content|news_content|newsct_article)[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-      if (!bodyMatch) return null;
-      // 태그 제거 후 공백 정리
-      return bodyMatch[1]
+      const candidates = [
+        // 네이버뉴스
+        html.match(/<div[^>]+id=["']dic_area["'][^>]*>([\s\S]*?)<\/div>/i),
+        html.match(/<div[^>]+class=["'][^"']*newsct_article[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),
+        // 다음뉴스
+        html.match(/<div[^>]+class=["'][^"']*article_view[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),
+        // 일반 article 태그
+        html.match(/<article[^>]*>([\s\S]*?)<\/article>/i),
+        // 연합뉴스·기타
+        html.match(/<div[^>]+class=["'][^"']*(?:article|articleBody|article-body|article_body|news-article)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),
+      ];
+      const raw = candidates.find(m => m)?.[1] || null;
+      if (!raw) return null;
+      return raw
         .replace(/<script[\s\S]*?<\/script>/gi, '')
         .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<figure[\s\S]*?<\/figure>/gi, '')
         .replace(/<[^>]+>/g, ' ')
         .replace(/\s{2,}/g, ' ')
-        .trim()
-        .slice(0, 3000); // 최대 3000자
+        .replace(/&[a-z#0-9]+;/gi, s => decodeHtmlEntities(s))
+        .trim();
+    }
+
+    // 규칙 기반 핵심 문장 추출 요약
+    function extractiveSummarize(ogDesc, body, titleText) {
+      // 문장 분리 (마침표·느낌표·물음표 기준, 단 숫자 소수점 제외)
+      const splitSentences = text =>
+        text.split(/(?<=[.!?])\s+(?=[가-힣A-Z"'"\(])/u)
+            .map(s => s.trim())
+            .filter(s => s.length > 20 && s.length < 300);
+
+      // 핵심 키워드 (숫자·%, 따옴표, 법령명, 강조 표현 등 포함 문장 우선)
+      const scoreS = s => {
+        let sc = 0;
+        if (/\d+[억조만원%]/.test(s)) sc += 3;       // 수치
+        if (/['"「」『』]/.test(s)) sc += 2;          // 인용
+        if (/법|규제|시행|개정|도입|위반|과징금/.test(s)) sc += 2; // 규제
+        if (/처음|최초|최대|최소|역대|단독|발표|결정/.test(s)) sc += 2; // 뉴스성
+        if (/계획|예정|추진|검토|의무|금지/.test(s)) sc += 1;
+        if (s.length > 60 && s.length < 200) sc += 1; // 적당한 길이
+        return sc;
+      };
+
+      const sentences = splitSentences(body || '');
+      const scored = sentences
+        .map(s => ({ s, sc: scoreS(s) }))
+        .sort((a, b) => b.sc - a.sc);
+
+      // 점수 높은 순 최대 5개, 원문 등장 순서로 재정렬
+      const top = scored.slice(0, 5).map(x => x.s);
+      const ordered = sentences.filter(s => top.includes(s)).slice(0, 5);
+
+      if (ordered.length === 0) {
+        // 본문 추출 실패 시 og:description 그대로
+        return ogDesc ? decodeHtmlEntities(ogDesc) : '';
+      }
+
+      return ordered.map(s => `• ${s}`).join('\n');
     }
 
     const bodyText = extractBody(html);
-    const summary = decodeHtmlEntities(rawSummary) || (bodyText ? bodyText.slice(0, 300) + '…' : '');
-
-    // title 없으면 throw → catch 블록으로
-    if (!title) throw new Error('title 추출 실패');
-
-    // Claude API로 본문 요약 (API 키 있을 때만)
-    async function summarizeWithClaude(title, body, apiKey) {
-      if (!body || body.length < 100) return null;
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 400,
-          messages: [{
-            role: 'user',
-            content: `다음 기사의 핵심 내용을 불릿 포인트 3~5개로 간결하게 요약해줘. 한국어로, 각 포인트는 한 줄로. 앞에 "•" 기호 사용.\n\n제목: ${title}\n\n본문:\n${body.slice(0, 2000)}`
-          }]
-        })
-      });
-      if (!resp.ok) return null;
-      const data = await resp.json();
-      return data.content?.[0]?.text?.trim() || null;
-    }
-
-    const apiKey = localStorage.getItem('claude_api_key');
-    let finalSummary = summary;
-    if (apiKey && bodyText) {
-      status.textContent = 'Claude로 요약 중...';
-      const aiSummary = await summarizeWithClaude(title, bodyText, apiKey);
-      if (aiSummary) finalSummary = aiSummary;
-    }
+    const ogDesc = decodeHtmlEntities(rawSummary);
+    const finalSummary = extractiveSummarize(ogDesc, bodyText, title);
 
     // 기사 원문 발행일 추출
     const pubDate = extractPubDate(html);
@@ -660,7 +670,7 @@ document.getElementById('ingestSubmit').addEventListener('click', async () => {
       id: `manual_${Date.now()}`,
       title,
       url,
-      summary: finalSummary || '',
+      summary: finalSummary,
       date: pubDate,
       topic: topic || '미분류',
       companies: company ? [company] : [],
