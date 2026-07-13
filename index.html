@@ -186,6 +186,13 @@
   </div>
   <button class="ingest-submit" id="ingestSubmit">추가하기</button>
   <div class="ingest-status" id="ingestStatus"></div>
+  <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+    <div style="display:flex;gap:6px;align-items:center">
+      <input type="password" class="ingest-url" id="apiKeyInput" placeholder="Claude API 키 (요약 자동화용, 선택사항)" style="font-size:12px;padding:7px 10px">
+      <button id="apiKeySave" style="background:var(--tag-bg);color:var(--tag-text);border:1px solid var(--border);border-radius:6px;padding:7px 12px;font-size:12px;cursor:pointer;white-space:nowrap">저장</button>
+    </div>
+    <div id="apiKeyStatus" style="font-size:11px;color:var(--text2);margin-top:5px"></div>
+  </div>
 </div>
 
 <!-- 기사 상세 모달 -->
@@ -564,20 +571,87 @@ document.getElementById('ingestSubmit').addEventListener('click', async () => {
 
     const html = await fetchHtml(url);
 
-    const title =
+    // HTML 엔티티 디코딩 (&quot; &amp; &lt; 등)
+    function decodeHtmlEntities(str) {
+      if (!str) return str;
+      return str
+        .replace(/&quot;/g, '"').replace(/&#34;/g, '"')
+        .replace(/&apos;/g, "'").replace(/&#39;/g, "'")
+        .replace(/&amp;/g, '&').replace(/&#38;/g, '&')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
+        .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+    }
+
+    const rawTitle =
       getMeta(html, 'og:title') ||
       getMeta(html, 'twitter:title') ||
       html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() ||
       null;
+    const title = decodeHtmlEntities(rawTitle);
 
-    const summary =
+    const rawSummary =
       getMeta(html, 'og:description') ||
       getMeta(html, 'twitter:description') ||
       getMeta(html, 'description', 'name') ||
       null;
 
+    // 기사 본문 추출 (article/main 태그 내 텍스트)
+    function extractBody(html) {
+      // <article> 또는 id/class에 article·content·body·news가 포함된 div
+      const bodyMatch =
+        html.match(/<article[^>]*>([\s\S]*?)<\/article>/i) ||
+        html.match(/<div[^>]*(?:id|class)="[^"]*(?:article|articleBody|content|news_content|newsct_article)[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      if (!bodyMatch) return null;
+      // 태그 제거 후 공백 정리
+      return bodyMatch[1]
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, 3000); // 최대 3000자
+    }
+
+    const bodyText = extractBody(html);
+    const summary = decodeHtmlEntities(rawSummary) || (bodyText ? bodyText.slice(0, 300) + '…' : '');
+
     // title 없으면 throw → catch 블록으로
     if (!title) throw new Error('title 추출 실패');
+
+    // Claude API로 본문 요약 (API 키 있을 때만)
+    async function summarizeWithClaude(title, body, apiKey) {
+      if (!body || body.length < 100) return null;
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 400,
+          messages: [{
+            role: 'user',
+            content: `다음 기사의 핵심 내용을 불릿 포인트 3~5개로 간결하게 요약해줘. 한국어로, 각 포인트는 한 줄로. 앞에 "•" 기호 사용.\n\n제목: ${title}\n\n본문:\n${body.slice(0, 2000)}`
+          }]
+        })
+      });
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      return data.content?.[0]?.text?.trim() || null;
+    }
+
+    const apiKey = localStorage.getItem('claude_api_key');
+    let finalSummary = summary;
+    if (apiKey && bodyText) {
+      status.textContent = 'Claude로 요약 중...';
+      const aiSummary = await summarizeWithClaude(title, bodyText, apiKey);
+      if (aiSummary) finalSummary = aiSummary;
+    }
 
     // 기사 원문 발행일 추출
     const pubDate = extractPubDate(html);
@@ -586,7 +660,7 @@ document.getElementById('ingestSubmit').addEventListener('click', async () => {
       id: `manual_${Date.now()}`,
       title,
       url,
-      summary: summary || '',
+      summary: finalSummary || '',
       date: pubDate,
       topic: topic || '미분류',
       companies: company ? [company] : [],
@@ -629,6 +703,24 @@ document.getElementById('ingestSubmit').addEventListener('click', async () => {
     btn.disabled = false;
   }
 });
+
+// API 키 저장/로드
+(function() {
+  const saved = localStorage.getItem('claude_api_key');
+  const statusEl = document.getElementById('apiKeyStatus');
+  if (saved) statusEl.textContent = '✓ API 키 저장됨 — 기사 추가 시 자동 요약됩니다';
+  document.getElementById('apiKeySave').addEventListener('click', () => {
+    const key = document.getElementById('apiKeyInput').value.trim();
+    if (!key) {
+      localStorage.removeItem('claude_api_key');
+      statusEl.textContent = 'API 키가 삭제됐습니다';
+      return;
+    }
+    localStorage.setItem('claude_api_key', key);
+    document.getElementById('apiKeyInput').value = '';
+    statusEl.textContent = '✓ API 키 저장됨 — 기사 추가 시 자동 요약됩니다';
+  });
+})();
 
 // 모달 닫기
 document.getElementById('modalClose').addEventListener('click', () => {
