@@ -538,17 +538,46 @@ document.getElementById('ingestSubmit').addEventListener('click', async () => {
   status.textContent = '기사 정보를 가져오는 중...';
 
   try {
-    // URL에서 메타 추출 (Open Graph / meta title)
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-    const res = await fetch(proxyUrl);
-    const data = await res.json();
-    const html = data.contents || '';
-    const titleMatch = html.match(/<meta[^>]+property="og:title"[^>]+content="([^"]+)"/i) ||
-                       html.match(/<title[^>]*>([^<]+)<\/title>/i);
-    const descMatch = html.match(/<meta[^>]+property="og:description"[^>]+content="([^"]+)"/i) ||
-                      html.match(/<meta[^>]+name="description"[^>]+content="([^"]+)"/i);
-    const title = titleMatch ? titleMatch[1].trim() : url;
-    const summary = descMatch ? descMatch[1].trim() : '';
+    // <meta> 태그에서 속성 순서 무관하게 content 추출
+    function getMeta(html, key, keyAttr = 'property') {
+      const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // property/name="key" content="..." 또는 content="..." property/name="key" 양쪽 모두 처리
+      const tagRe = new RegExp(`<meta\\s[^>]*${keyAttr}=["']${escaped}["'][^>]*>`, 'gi');
+      const tag = tagRe.exec(html)?.[0] || '';
+      return tag.match(/content=["']([^"']+)["']/i)?.[1]?.trim() || null;
+    }
+
+    // 여러 프록시를 순서대로 시도
+    async function fetchHtml(url) {
+      const proxies = [
+        () => fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`).then(r => r.ok ? r.text() : Promise.reject(r.status)),
+        () => fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`).then(r => r.json()).then(d => d.contents || Promise.reject('empty')),
+      ];
+      for (const tryProxy of proxies) {
+        try {
+          const html = await tryProxy();
+          if (html && html.length > 500) return html;
+        } catch(e) { /* 다음 시도 */ }
+      }
+      throw new Error('모든 프록시 실패');
+    }
+
+    const html = await fetchHtml(url);
+
+    const title =
+      getMeta(html, 'og:title') ||
+      getMeta(html, 'twitter:title') ||
+      html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() ||
+      null;
+
+    const summary =
+      getMeta(html, 'og:description') ||
+      getMeta(html, 'twitter:description') ||
+      getMeta(html, 'description', 'name') ||
+      null;
+
+    // title 없으면 throw → catch 블록으로
+    if (!title) throw new Error('title 추출 실패');
 
     // 기사 원문 발행일 추출
     const pubDate = extractPubDate(html);
@@ -557,7 +586,7 @@ document.getElementById('ingestSubmit').addEventListener('click', async () => {
       id: `manual_${Date.now()}`,
       title,
       url,
-      summary,
+      summary: summary || '',
       date: pubDate,
       topic: topic || '미분류',
       companies: company ? [company] : [],
