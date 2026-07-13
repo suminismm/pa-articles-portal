@@ -556,14 +556,20 @@ document.getElementById('ingestSubmit').addEventListener('click', async () => {
 
     // 여러 프록시를 순서대로 시도
     async function fetchHtml(url) {
+      const enc = encodeURIComponent(url);
       const proxies = [
-        () => fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`).then(r => r.ok ? r.text() : Promise.reject(r.status)),
-        () => fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`).then(r => r.json()).then(d => d.contents || Promise.reject('empty')),
+        // proxy.cors.sh — 다음뉴스 등 allorigins 차단 사이트에 강함
+        () => fetch(`https://proxy.cors.sh/${url}`, {headers:{'x-requested-with':'XMLHttpRequest'}}).then(r => r.ok ? r.text() : Promise.reject(r.status)),
+        // allorigins raw
+        () => fetch(`https://api.allorigins.win/raw?url=${enc}`).then(r => r.ok ? r.text() : Promise.reject(r.status)),
+        // allorigins get (JSON wrapper)
+        () => fetch(`https://api.allorigins.win/get?url=${enc}`).then(r => r.json()).then(d => d.contents || Promise.reject('empty')),
       ];
       for (const tryProxy of proxies) {
         try {
           const html = await tryProxy();
-          if (html && html.length > 500) return html;
+          // corsproxy.io 자기 페이지 반환 방지
+          if (html && html.length > 500 && !html.includes('CORSPROXY')) return html;
         } catch(e) { /* 다음 시도 */ }
       }
       throw new Error('모든 프록시 실패');
