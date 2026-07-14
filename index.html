@@ -746,31 +746,45 @@ function getMeta(html, key, keyAttr = 'property') {
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const tagRe = new RegExp(`<meta\\s[^>]*${keyAttr}=["']${escaped}["'][^>]*>`, 'gi');
   const tag = tagRe.exec(html)?.[0] || '';
-  return tag.match(/content=["']([^"']+)["']/i)?.[1]?.trim() || null;
+  if (!tag) return null;
+  // content 값: 따옴표 혼용 처리 (큰따옴표로 열고 작은따옴표 포함 or 반대)
+  const dq = tag.match(/content="([^"]*)"/i);
+  if (dq) return dq[1].trim() || null;
+  const sq = tag.match(/content='([^']*)'/i);
+  if (sq) return sq[1].trim() || null;
+  return null;
 }
 
 async function fetchHtml(url) {
   const enc = encodeURIComponent(url);
 
-  // allorigins /get: JSON 내부에 script 종료 태그 있어도 text()로 받아서 수동 파싱
-  async function tryAlloriginsGet() {
-    const r = await fetch(`https://api.allorigins.win/get?url=${enc}`);
-    if (!r.ok) throw r.status;
-    const text = await r.text();
-    // JSON 파싱 실패 대비: contents":"..." 패턴으로 직접 추출
-    const m = text.match(/"contents"\s*:\s*"([\s\S]+)",\s*"status"/);
-    if (m) {
-      try { return JSON.parse('"' + m[1] + '"'); } catch(e) {}
-    }
-    // 정상 파싱 시도
-    try { const d = JSON.parse(text); return d.contents || null; } catch(e) {}
-    return null;
-  }
-
   const proxies = [
-    () => fetch(`https://api.allorigins.win/raw?url=${enc}`).then(r => { if(!r.ok) throw r.status; return r.text(); }),
-    tryAlloriginsGet,
-    () => fetch(`https://proxy.cors.sh/${url}`, { headers: { 'x-cors-api-key': 'temp' } }).then(r => r.ok ? r.text() : Promise.reject(r.status)),
+    // 1) allorigins raw — 가장 빠름
+    async () => {
+      const r = await fetch(`https://api.allorigins.win/raw?url=${enc}`);
+      if (!r.ok) throw r.status;
+      return r.text();
+    },
+    // 2) allorigins get — raw 실패 시. 응답을 text로 받아 안전하게 파싱
+    async () => {
+      const r = await fetch(`https://api.allorigins.win/get?url=${enc}`);
+      if (!r.ok) throw r.status;
+      const text = await r.text();
+      try { return JSON.parse(text).contents || null; } catch(e) {}
+      // JSON 파싱 실패(내부에 특수문자) → DOMParser로 우회
+      const fakeDoc = new DOMParser().parseFromString(
+        `<html><body><div id="x">${text}</div></body></html>`, 'text/html'
+      );
+      const raw = fakeDoc.getElementById('x')?.textContent || '';
+      const m = raw.match(/"contents":"([\s\S]+?)","status":/);
+      return m ? m[1].replace(/\\n/g,'\n').replace(/\\"/g,'"') : null;
+    },
+    // 3) proxy.cors.sh 폴백
+    async () => {
+      const r = await fetch(`https://proxy.cors.sh/${url}`, { headers: { 'x-cors-api-key': 'temp_key' } });
+      if (!r.ok) throw r.status;
+      return r.text();
+    },
   ];
   for (const tryProxy of proxies) {
     try {
