@@ -866,38 +866,59 @@ function extractiveSummarize(ogDesc, body) {
     if (s.length > 60 && s.length < 200) sc += 1;
     return sc;
   };
-  // 기자 서명(email) 문장 제거
-  const sentences = splitSentences(body || '').filter(s => !/@\S+\.\S+/.test(s));
+  // 기자 서명(email)·취재 경위 서술("~취재를 종합하면") 문장 제거 — 사실 요약에 불필요
+  const sentences = splitSentences(body || '')
+    .filter(s => !/@\S+\.\S+/.test(s))
+    .filter(s => !/취재를?\s*종합하면|기자와의?\s*통화에서/.test(s));
   if (sentences.length === 0) return ogDesc || '';
 
-  // 리드(첫 문장)는 점수와 무관하게 항상 포함 — 기사 도입부/핵심 사건을 놓치지 않도록.
-  // 나머지 본문은 균등 구간으로 나눠 구간별 최고점 문장을 뽑아 전체 흐름을 담는다.
-  // (점수 상위 N개만 뽑으면 숫자·인용이 많은 특정 구간에 쏠려 다른 구간 흐름이 누락됨)
+  // 리드(첫 문장)는 점수와 무관하게 항상 포함 — "무슨 일이 있었는지"를 요약 서두에서 놓치지 않도록.
   const lead = sentences[0];
-  const N = 5;
+  const N = 4;
   const n = sentences.length;
-  const bodyEnd = Math.round(n * 0.85); // 뒤 15%는 결론부로 별도 처리
+  const bodyEnd = Math.round(n * 0.85); // 뒤 15%는 결론/쟁점부로 별도 처리
   const restSents = sentences.slice(1, bodyEnd);
   const tailSents = sentences.slice(bodyEnd);
 
-  const summary = [lead];
+  // 핵심 내용: 나머지 본문을 균등 구간으로 나눠 구간별 최고점 문장을 뽑아 기사 전개 순서를 반영
+  // (점수 상위 N개만 뽑으면 숫자·인용이 많은 특정 구간에 쏠려 다른 구간 흐름이 누락됨)
+  const core = [];
   const segSize = Math.max(1, restSents.length / N);
   for (let i = 0; i < N; i++) {
     const start = Math.round(i * segSize);
     const end = i === N - 1 ? restSents.length : Math.round((i + 1) * segSize);
     const seg = restSents.slice(start, end);
     if (seg.length === 0) continue;
-    summary.push(seg.reduce((best, s) => scoreS(s) > scoreS(best) ? s : best));
+    core.push(seg.reduce((best, s) => scoreS(s) > scoreS(best) ? s : best));
   }
 
-  // 결론부: 비판/전망 키워드 우선, 없으면 첫 문장 (위치 기반 보정)
+  // 주요 수치·일정: 날짜/금액/비율 등 구체적 숫자가 담긴 문장 중 핵심 내용과 중복되지 않는 것
+  const numericRe = /\d+\s*(?:년|월|일|GW|조|억|만원|%|명|건)/;
+  const numeric = sentences
+    .filter(s => numericRe.test(s) && s !== lead && !core.includes(s))
+    .slice(0, 3);
+
+  // 쟁점·영향: 결론부에서 비판/전망 키워드 우선, 없으면 결론부 첫 문장 (위치 기반)
+  let critique = null;
   if (tailSents.length > 0) {
-    const critique = tailSents.find(s => /지적|비판|미미|우려|과제|한계|숙제/.test(s)) || tailSents[0];
-    summary.push(critique);
+    critique = tailSents.find(s => /지적|비판|미미|우려|과제|한계|숙제|전망|평가/.test(s)) || tailSents[0];
   }
 
-  if (summary.length === 0) return ogDesc || '';
-  return summary.map(s => `• ${s}`).join('\n');
+  // 최종 출력: 한 줄 요약 → 핵심 내용 → 주요 수치·일정 → 쟁점·영향
+  const parts = [];
+  parts.push(lead);
+  if (core.length > 0) parts.push(...core.map(s => `• ${s}`));
+  if (numeric.length > 0) {
+    parts.push('▸ 주요 수치·일정');
+    parts.push(...numeric.map(s => `• ${s}`));
+  }
+  if (critique) {
+    parts.push('▸ 쟁점·영향');
+    parts.push(`• ${critique}`);
+  }
+
+  if (parts.length === 0) return ogDesc || '';
+  return parts.join('\n');
 }
 
 // ── 인제스트 패널 ──────────────────────────────────────────
