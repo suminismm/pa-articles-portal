@@ -866,11 +866,36 @@ function extractiveSummarize(ogDesc, body) {
     if (s.length > 60 && s.length < 200) sc += 1;
     return sc;
   };
-  const sentences = splitSentences(body || '');
-  const top = sentences.map(s => ({s, sc: scoreS(s)})).sort((a,b) => b.sc - a.sc).slice(0, 5).map(x => x.s);
-  const ordered = sentences.filter(s => top.includes(s)).slice(0, 5);
-  if (ordered.length === 0) return ogDesc || '';
-  return ordered.map(s => `• ${s}`).join('\n');
+  // 기자 서명(email) 문장 제거
+  const sentences = splitSentences(body || '').filter(s => !/@\S+\.\S+/.test(s));
+  if (sentences.length === 0) return ogDesc || '';
+
+  // 기사를 균등 구간으로 나눠 구간별 최고점 문장을 뽑아 전체 흐름을 담는다.
+  // (점수 상위 N개만 뽑으면 초반부 자극적 문장에 쏠려 후반부 흐름이 누락됨)
+  const N = 5;
+  const n = sentences.length;
+  const bodyEnd = Math.round(n * 0.85); // 뒤 15%는 결론부로 별도 처리
+  const bodySents = sentences.slice(0, bodyEnd);
+  const tailSents = sentences.slice(bodyEnd);
+
+  const summary = [];
+  const segSize = Math.max(1, bodySents.length / N);
+  for (let i = 0; i < N; i++) {
+    const start = Math.round(i * segSize);
+    const end = i === N - 1 ? bodySents.length : Math.round((i + 1) * segSize);
+    const seg = bodySents.slice(start, end);
+    if (seg.length === 0) continue;
+    summary.push(seg.reduce((best, s) => scoreS(s) > scoreS(best) ? s : best));
+  }
+
+  // 결론부: 비판/전망 키워드 우선, 없으면 첫 문장 (위치 기반 보정)
+  if (tailSents.length > 0) {
+    const critique = tailSents.find(s => /지적|비판|미미|우려|과제|한계|숙제/.test(s)) || tailSents[0];
+    summary.push(critique);
+  }
+
+  if (summary.length === 0) return ogDesc || '';
+  return summary.map(s => `• ${s}`).join('\n');
 }
 
 // ── 인제스트 패널 ──────────────────────────────────────────
