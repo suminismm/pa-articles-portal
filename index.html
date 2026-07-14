@@ -848,10 +848,14 @@ function extractBody(html) {
 }
 
 function extractiveSummarize(ogDesc, body) {
-  const splitSentences = text =>
-    text.split(/(?<=[.!?])\s+(?=[가-힣A-Z"'"\(])/u)
-        .map(s => s.trim())
-        .filter(s => s.length > 20 && s.length < 300);
+  const splitSentences = text => {
+    // 기사 내 소제목 기호(■ ▶ ◆ ● 등) 제거 — 문장 흐름을 방해하지 않도록 기호만 삭제
+    const cleaned = (text || '').replace(/[■▶◆●]/g, ' ').replace(/\s{2,}/g, ' ');
+    return cleaned
+      .split(/(?<=[.!?])\s+(?=[가-힣A-Za-z0-9"'"\(])/u)
+      .map(s => s.trim())
+      .filter(s => s.length > 20 && s.length < 300);
+  };
   const scoreS = s => {
     let sc = 0;
     if (/\d+[억조만원%]/.test(s)) sc += 3;
