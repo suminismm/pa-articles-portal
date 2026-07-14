@@ -759,7 +759,13 @@ async function fetchHtml(url) {
   const enc = encodeURIComponent(url);
 
   const proxies = [
-    // 1) allorigins raw — 가장 빠름
+    // 0) 전용 Cloudflare Worker 프록시 — 가장 안정적, 최우선
+    async () => {
+      const r = await fetch(`https://gingerpowder-proxy.angelbearsm.workers.dev/?url=${enc}`);
+      if (!r.ok) throw r.status;
+      return r.text();
+    },
+    // 1) allorigins raw
     async () => {
       const r = await fetch(`https://api.allorigins.win/raw?url=${enc}`);
       if (!r.ok) throw r.status;
