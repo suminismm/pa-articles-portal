@@ -870,20 +870,22 @@ function extractiveSummarize(ogDesc, body) {
   const sentences = splitSentences(body || '').filter(s => !/@\S+\.\S+/.test(s));
   if (sentences.length === 0) return ogDesc || '';
 
-  // 기사를 균등 구간으로 나눠 구간별 최고점 문장을 뽑아 전체 흐름을 담는다.
-  // (점수 상위 N개만 뽑으면 초반부 자극적 문장에 쏠려 후반부 흐름이 누락됨)
+  // 리드(첫 문장)는 점수와 무관하게 항상 포함 — 기사 도입부/핵심 사건을 놓치지 않도록.
+  // 나머지 본문은 균등 구간으로 나눠 구간별 최고점 문장을 뽑아 전체 흐름을 담는다.
+  // (점수 상위 N개만 뽑으면 숫자·인용이 많은 특정 구간에 쏠려 다른 구간 흐름이 누락됨)
+  const lead = sentences[0];
   const N = 5;
   const n = sentences.length;
   const bodyEnd = Math.round(n * 0.85); // 뒤 15%는 결론부로 별도 처리
-  const bodySents = sentences.slice(0, bodyEnd);
+  const restSents = sentences.slice(1, bodyEnd);
   const tailSents = sentences.slice(bodyEnd);
 
-  const summary = [];
-  const segSize = Math.max(1, bodySents.length / N);
+  const summary = [lead];
+  const segSize = Math.max(1, restSents.length / N);
   for (let i = 0; i < N; i++) {
     const start = Math.round(i * segSize);
-    const end = i === N - 1 ? bodySents.length : Math.round((i + 1) * segSize);
-    const seg = bodySents.slice(start, end);
+    const end = i === N - 1 ? restSents.length : Math.round((i + 1) * segSize);
+    const seg = restSents.slice(start, end);
     if (seg.length === 0) continue;
     summary.push(seg.reduce((best, s) => scoreS(s) > scoreS(best) ? s : best));
   }
