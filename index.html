@@ -897,31 +897,14 @@ function extractiveSummarize(ogDesc, body) {
     core.push(seg.reduce((best, s) => scoreS(s) > scoreS(best) ? s : best));
   }
 
-  // 주요 수치·일정: 날짜/금액/비율 등 구체적 숫자가 담긴 문장 중 핵심 내용과 중복되지 않는 것
-  const numericRe = /\d+\s*(?:년|월|일|GW|조|억|만원|%|명|건)/;
-  const numeric = sentences
-    .filter(s => numericRe.test(s) && s !== lead && !core.includes(s))
-    .slice(0, 3);
-
-  // 쟁점·영향: 결론부에서 비판/전망 키워드 우선, 없으면 결론부 첫 문장 (위치 기반)
-  let critique = null;
+  // 결론부: 비판/전망 키워드 우선, 없으면 결론부 첫 문장 (위치 기반) — 별도 섹션 없이 핵심 내용에 합류
   if (tailSents.length > 0) {
-    critique = tailSents.find(s => /지적|비판|미미|우려|과제|한계|숙제|전망|평가/.test(s)) || tailSents[0];
+    const critique = tailSents.find(s => /지적|비판|미미|우려|과제|한계|숙제|전망|평가/.test(s)) || tailSents[0];
+    if (!core.includes(critique)) core.push(critique);
   }
 
-  // 최종 출력: 한 줄 요약 → 핵심 내용 → 주요 수치·일정 → 쟁점·영향
-  const parts = [];
-  parts.push(lead);
-  if (core.length > 0) parts.push(...core.map(s => `• ${s}`));
-  if (numeric.length > 0) {
-    parts.push('▸ 주요 수치·일정');
-    parts.push(...numeric.map(s => `• ${s}`));
-  }
-  if (critique) {
-    parts.push('▸ 쟁점·영향');
-    parts.push(`• ${critique}`);
-  }
-
+  // 최종 출력: 리드 + 핵심 내용을 하나의 흐름으로
+  const parts = [lead, ...core.map(s => `• ${s}`)];
   if (parts.length === 0) return ogDesc || '';
   return parts.join('\n');
 }
