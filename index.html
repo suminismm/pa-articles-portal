@@ -262,8 +262,13 @@ async function saveToSupabase(a) {
     })
   });
 }
-async function deleteFromSupabase(id) {
-  await sbFetch(`articles?id=eq.${id}`, { method: 'DELETE' });
+async function deleteFromSupabase(id, password) {
+  const r = await fetch(`https://gingerpowder-proxy.angelbearsm.workers.dev/delete?id=${encodeURIComponent(id)}&password=${encodeURIComponent(password)}`, {
+    method: 'POST',
+  });
+  const data = await r.json();
+  if (!data.ok) throw new Error(data.error || '삭제 실패');
+  return data;
 }
 // ────────────────────────────────────────────────────────
 
@@ -1042,15 +1047,26 @@ document.getElementById('modalClose').addEventListener('click', () => {
   document.getElementById('modalOverlay').classList.remove('open');
 });
 
-// 수동 추가 기사 삭제
+// 수동 추가 기사 삭제 — 비밀번호 확인 후 진행
 document.getElementById('modalDelete').addEventListener('click', async () => {
   if (!modalCurrentId) return;
-  if (!confirm('이 기사를 삭제할까요?')) return;
-  DB = DB.filter(a => a.id !== modalCurrentId);
-  saveManual();
-  try { await deleteFromSupabase(modalCurrentId); } catch(e) { console.warn('Supabase 삭제 실패:', e); }
-  document.getElementById('modalOverlay').classList.remove('open');
-  render();
+  const password = prompt('삭제 비밀번호를 입력하세요');
+  if (password === null) return; // 취소
+  const btn = document.getElementById('modalDelete');
+  btn.disabled = true;
+  btn.textContent = '삭제 중...';
+  try {
+    await deleteFromSupabase(modalCurrentId, password);
+    DB = DB.filter(a => a.id !== modalCurrentId);
+    saveManual();
+    document.getElementById('modalOverlay').classList.remove('open');
+    render();
+  } catch(e) {
+    alert('삭제 실패: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '삭제';
+  }
 });
 document.getElementById('modalOverlay').addEventListener('click', e => {
   if (e.target === document.getElementById('modalOverlay'))
