@@ -753,7 +753,7 @@ function getMeta(html, key, keyAttr = 'property') {
 async function fetchHtml(url) {
   const enc = encodeURIComponent(url);
 
-  // allorigins /get: JSON 내부에 </script> 있어도 text()로 받아서 수동 파싱
+  // allorigins /get: JSON 내부에 script 종료 태그 있어도 text()로 받아서 수동 파싱
   async function tryAlloriginsGet() {
     const r = await fetch(`https://api.allorigins.win/get?url=${enc}`);
     if (!r.ok) throw r.status;
