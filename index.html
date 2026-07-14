@@ -801,15 +801,42 @@ async function fetchHtml(url) {
   return null;
 }
 
+// 여는 태그(openTagEnd 이후)부터 시작해 중첩 깊이를 세어 정확히 닫히는 지점까지 추출
+function extractBalancedTag(html, openTagStart, tagName) {
+  const openTagEnd = html.indexOf('>', openTagStart) + 1;
+  if (openTagEnd <= 0) return null;
+  const tagRe = new RegExp(`<(/?)${tagName}\\b[^>]*>`, 'gi');
+  tagRe.lastIndex = openTagEnd;
+  let depth = 1;
+  let m;
+  while ((m = tagRe.exec(html))) {
+    if (m[1] === '/') {
+      depth--;
+      if (depth === 0) return html.slice(openTagEnd, m.index);
+    } else {
+      depth++;
+    }
+  }
+  return html.slice(openTagEnd); // 못 닫히면 끝까지
+}
+
 function extractBody(html) {
-  const candidates = [
-    html.match(/<div[^>]+id=["']dic_area["'][^>]*>([\s\S]*?)<\/div>/i),
-    html.match(/<div[^>]+class=["'][^"']*newsct_article[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),
-    html.match(/<div[^>]+class=["'][^"']*article_view[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),
-    html.match(/<article[^>]*>([\s\S]*?)<\/article>/i),
-    html.match(/<div[^>]+class=["'][^"']*(?:articleBody|article-body|article_body|news-article)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),
+  // (정규식, 태그명) 순서로 시도 — 매칭되면 균형잡힌 닫는 태그까지 추출
+  const patterns = [
+    [/<div[^>]+id=["']dic_area["'][^>]*>/i, 'div'],
+    [/<div[^>]+class=["'][^"']*newsct_article[^"']*["'][^>]*>/i, 'div'],
+    [/<div[^>]+class=["'][^"']*article_view[^"']*["'][^>]*>/i, 'div'],
+    [/<article[^>]*>/i, 'article'],
+    [/<div[^>]+class=["'][^"']*(?:articleBody|article-body|article_body|news-article)[^"']*["'][^>]*>/i, 'div'],
   ];
-  const raw = candidates.find(m => m)?.[1] || null;
+  let raw = null;
+  for (const [re, tagName] of patterns) {
+    const m = html.match(re);
+    if (m) {
+      raw = extractBalancedTag(html, m.index, tagName);
+      if (raw && raw.length > 100) break;
+    }
+  }
   if (!raw) return null;
   return raw
     .replace(/<script[\s\S]*?<\/script>/gi, '')
