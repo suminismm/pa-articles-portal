@@ -145,7 +145,7 @@
 
 <div class="filters" id="companyFilters">
   <span class="filter-label">법인</span>
-  <span class="filter-chip active" data-type="company" data-val="">전체</span>
+  <span class="filter-chip active" data-type="company" data-val="" id="companyAll">전체</span>
   <!-- 법인 칩 동적 삽입 -->
   <div class="filter-divider"></div>
   <span class="filter-label">정렬</span>
@@ -387,6 +387,7 @@ async function loadData() {
 }
 
 function init() {
+  document.getElementById('companyAll').addEventListener('click', () => setCompany(''));
   buildCompanyFilters();
   buildSidebar();
   buildIngestSelects();
